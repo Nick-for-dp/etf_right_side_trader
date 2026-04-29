@@ -1,0 +1,34 @@
+# ETF 右侧交易助手 — 配置模板
+# 复制此文件为 settings.yaml 并修改
+
+etf_list:
+  - symbol: "588000"
+    name: "科创50ETF"
+    category: "broad"
+  - symbol: "513100"
+    name: "纳指ETF国泰"
+    category: "broad"
+  # 按需添加更多 ETF，格式同上
+  # category 建议取值：broad（宽基）/ sector（行业）
+
+database:
+  driver: "postgresql"
+
+strategy:
+  type: "ma_cross"
+  params:
+    ma_short: 20
+    ma_long: 60
+
+risk_control:
+  rules:
+    - type: "stop_loss"
+      params:
+        threshold: -0.08
+
+data:
+  lookback_days: 120
+
+scheduler:
+  run_time: "07:00"
+  timezone: "Asia/Shanghai"

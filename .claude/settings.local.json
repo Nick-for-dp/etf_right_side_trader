@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(cd /d D:\\\\projects\\\\etf_right_side_trader)",
+      "Bash(uv run *)",
+      "WebSearch",
+      "Bash(python *)",
+      "Bash(pip show *)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl -s http://localhost:8501/)",
+      "Bash(curl -s http://localhost:8501/_stcore/host-config)",
+      "Bash(netstat -ano)"
+    ]
+  }
+}

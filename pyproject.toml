@@ -1,0 +1,24 @@
+[project]
+name = "etf-right-side-trader"
+version = "0.1.0"
+description = "ETF 右侧交易助手"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit>=1.40",
+    "pandas>=2.2",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "akshare>=1.15",
+    "apscheduler>=3.10",
+    "plotly>=5.24",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "pydantic>=2.10",
+    "exchange-calendars>=4.13.2",
+    "baostock>=0.9.1",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
