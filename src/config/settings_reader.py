@@ -96,6 +96,17 @@ def _validate_risk_rules(raw: list) -> list[dict]:
             threshold = rparams.get("threshold")
             if not isinstance(threshold, (int, float)) or threshold >= 0:
                 raise ValueError(f"stop_loss.threshold 需 < 0，实际: {threshold}")
+        if rtype == "trailing_stop":
+            profit = rparams.get("profit_threshold")
+            drawdown = rparams.get("drawdown_threshold")
+            if not isinstance(profit, (int, float)) or profit <= 0:
+                raise ValueError(
+                    f"trailing_stop.profit_threshold 需 > 0，实际: {profit}"
+                )
+            if not isinstance(drawdown, (int, float)) or drawdown <= 0:
+                raise ValueError(
+                    f"trailing_stop.drawdown_threshold 需 > 0，实际: {drawdown}"
+                )
         rules.append({"type": rtype, "params": rparams})
     return rules
 

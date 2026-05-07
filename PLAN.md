@@ -10,7 +10,7 @@
 dashboard/（Streamlit 3 页）
 runner/（STEP 1-5 编排）
 fetcher/ | indicators/ | strategy/ | risk/ | advisor/
-service/（TradingCalendar | IndicatorService | PositionService）
+service/（TradingCalendar | IndicatorService | PositionService | QuoteService）
 database/（ORM schema ←→ pydantic models ←→ repository）
 config/（YAML + .env）
 ```
@@ -55,16 +55,22 @@ config/（YAML + .env）
 - 自动检测已有数据，跳过已覆盖的日期范围
 - 回填逻辑已迁移到 `DataManager` 中，`init_system` 可直接传参调用
 
-### v1.2 — 回撤止盈 + 盈利分析
+### v1.2 — 回撤止盈 + 盈利分析 🔨（2026-05-07 启动）
 
-**回撤止盈**：
-- 新增 `risk/trailing_stop.py`：浮盈 10% 后回撤 5% 触发止盈
-- yaml 加一项 `rule`
+**Day 1：回撤止盈 ✅（2026-05-07 完成）**
 
-**盈利分析模块**（新增 `performance/`）：
-- 追踪信号发出后 N 日的实际收益
-- 信号准确率统计（BUY 后 N 日胜率）
-- 按策略版本 / ETF / 时间段分组对比
+新增 `risk/trailing_stop.py`：浮盈 10% 激活，从持仓期间最高点回撤 3% 触发 SELL。与止损规则在 `RiskController` 中链式执行，短路返回。新增 `service/quote_service.py`（`QuoteService.find_max_close_between`）+ `PositionService.get_holding_map` 为规则提供峰值数据，不改 `BaseRiskRule` 接口。
+
+**Day 2：盈利分析模块**
+
+新增 `performance/`（纯分析，不写库）：
+
+- `forward_return.py` — `ForwardReturnCalculator`：给定 ETF + BUY 信号日期，从 `quote` 表查 T+N 日收盘价，计算前向收益，N ∈ {5, 10, 20}
+- `analyzer.py` — `PerformanceAnalyzer`：按 ETF / 策略版本 / 时间段分组统计胜率、平均收益、中位数收益
+- `models/performance.py` — pydantic 展示模型，不入库
+- `dashboard/` — 新增"策略评估"标签页
+
+数据来源全部复用已有 `signals` + `quote` 表，不新增数据库表。
 
 ### v2.0 — 多指标综合评分
 

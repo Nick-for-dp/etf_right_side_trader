@@ -3,6 +3,7 @@
 from src.config import AppConfig
 from .base import BaseRiskRule, RiskResult
 from .stop_loss import StopLossRule
+from .trailing_stop import TrailingStopRule
 
 
 class RiskController:
@@ -21,6 +22,11 @@ class RiskController:
             if rtype == "stop_loss":
                 self._rules.append(StopLossRule(
                     threshold=params.get("threshold", -0.08),
+                ))
+            elif rtype == "trailing_stop":
+                self._rules.append(TrailingStopRule(
+                    profit_threshold=params.get("profit_threshold", 0.10),
+                    drawdown_threshold=params.get("drawdown_threshold", 0.03),
                 ))
 
     def register(self, rule: BaseRiskRule) -> None:

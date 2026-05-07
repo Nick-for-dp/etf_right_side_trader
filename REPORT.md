@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — MVP 技术报告
 
-> 版本 v1.1 | 2026-05-06
+> 版本 v1.2 Day 1 完成 | 2026-05-07
 
 ---
 
@@ -8,7 +8,9 @@
 
 ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系统。核心理念：不做预测，只做跟随 — 在趋势确认后入场（右侧交易），在趋势反转时离场。
 
-**当前策略（v1.1）**：MA20 上穿 MA60（金叉）且 MACD DIF > 0 → 买入，过滤无动能假突破；MA20 下穿 MA60（死叉）→ 卖出；持仓浮亏 ≥ 8% → 强制止损。
+**当前策略（v1.1）**：MA20 上穿 MA60（金叉）且 MACD DIF > 0 → 买入，过滤无动能假突破；MA20 下穿 MA60（死叉）→ 卖出。
+
+**风控（v1.2）**：两条规则链式执行 — ① 止损：浮亏 ≥ 8% 强制卖出；② 回撤止盈：浮盈触及 10% 后从最高点回撤 ≥ 3% 触发卖出。
 
 ---
 
@@ -30,8 +32,8 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 ├──────────┴──────────┴──────────┴────────────────────┤
 │  advisor/（操作建议查表映射）                           │
 ├─────────────────────────────────────────────────────┤
-│  service/（业务编排）                                  │
-│  TradingCalendar | IndicatorService | PositionService │
+│  service/（业务编排）                                                       │
+│  TradingCalendar | IndicatorService | PositionService | QuoteService │
 ├─────────────────────────────────────────────────────┤
 │  database/                                           │
 │  ORM schema ←→ pydantic models ←→ repository        │
@@ -90,7 +92,14 @@ for rule in risk_rules:
         return result  # 短路，优先匹配的规则生效
 ```
 
-当前规则：**硬止损** — 浮亏 ≥ 8% 触发强制卖出。规则链采用插件模式，新增规则只需实现 `BaseRiskRule` 并注册到 yaml。
+当前规则（两条，按配置顺序执行）：
+
+| 规则 | 类型 | 触发条件 | 职责 |
+|------|------|----------|------|
+| 硬止损 | `stop_loss` | 浮亏 ≥ 8% | 防止亏损扩大 |
+| 回撤止盈 | `trailing_stop` | 浮盈先触 10%，再从高点回撤 3% | 防止盈利变亏损 |
+
+规则链采用插件模式，新增规则只需实现 `BaseRiskRule` 并注册到 yaml。`trailing_stop` 通过 `QuoteService.find_max_close_between` 获取持仓期间最高点，`PositionService.get_holding_map` 提供建仓日映射，规则本体保持无状态。
 
 ### 4.3 操作建议映射
 
@@ -102,7 +111,7 @@ for rule in risk_rules:
 | 有仓 | BUY | 加仓 |
 | 有仓 | HOLD | 继续持有 |
 | 有仓 | SELL | 清仓 |
-| 任意 | 止损触发 | 强制清仓 |
+| 任意 | 止损/止盈触发 | 强制清仓 |
 
 风控信号优先级高于策略信号。
 
@@ -172,19 +181,13 @@ python main.py dashboard                         # 启动 Streamlit 仪表盘（
 
 ## 10. 待完成
 
-### 10.1 盈利分析模块
+### 10.1 回撤止盈 ✅（v1.2 Day 1，2026-05-07 完成）
 
-当前系统能给出每日操作建议（建仓/加仓/清仓/观望），但缺少对建议的跟踪和评估：
+新增 `risk/trailing_stop.py` + `service/quote_service.py`，浮盈 10% 后回撤 3% 触发止盈。与止损规则链式执行。
 
-- 缺少模拟盈亏跟踪：无法回答"如果按建议操作，当前盈亏是多少"
-- 缺少胜率统计：无法统计 BUY 信号后实际上涨的概率
-- 缺少信号评分：无法量化信号质量，不便于多策略对比
+### 10.2 盈利分析模块（v1.2 Day 2，待开发）
 
-**建议方案**：新增 `performance` 模块，跟踪每条信号发出后 N 日的实际收益，生成信号准确率报表。可参考现有 `operation_advice` 表结构，增加 `pnl_after_n_days` 等跟踪字段。
-
-### 10.2 回撤止盈
-
-持仓浮盈达 10% 后，若回撤至 5% 触发止盈卖出。新增 `risk/trailing_stop.py`，yaml 加一项 rule，现有风控插件链自动执行。
+新增 `performance/` 纯分析模块，追踪 BUY 信号发出后 N 日前向收益，按 ETF / 策略版本 / 时间段分组统计胜率。不新增数据库表，数据源复用 `signals` + `quote`。
 
 ### 10.3 仪表盘 MACD 展示
 
@@ -222,7 +225,7 @@ etf_right_side_trader/
 │   ├── advisor/                    # 操作建议（持仓 × 信号 查表）
 │   ├── runner/                     # 核心编排 STEP 1-5
 │   ├── scheduler/                  # APScheduler 定时调度
-│   ├── service/                    # 交易日历 / 指标编排 / 持仓管理
+│   ├── service/                    # 日历 / 指标编排 / 持仓管理 / 行情查询（4 个 service）
 │   ├── dashboard/                  # Streamlit 仪表盘（3 页）
 │   └── utils/                      # 日志 / 限流工具
 └── tests/

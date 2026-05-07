@@ -10,6 +10,12 @@ class PositionService:
     """持仓管理业务逻辑。"""
 
     @staticmethod
+    def get_holding_map() -> dict[str, date]:
+        """返回当前持仓映射 {code: entry_date}。"""
+        positions = positions_repo.find_all()
+        return {p.code: p.entry_date for p in positions}
+
+    @staticmethod
     def add(code: str, cost: float, shares: int, entry_date: date) -> Position:
         """建仓或加仓。已有持仓时重算加权平均成本。
 

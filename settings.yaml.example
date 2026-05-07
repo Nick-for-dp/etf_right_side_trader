@@ -25,6 +25,10 @@ risk_control:
     - type: "stop_loss"
       params:
         threshold: -0.08
+    - type: "trailing_stop"
+      params:
+        profit_threshold: 0.10
+        drawdown_threshold: 0.03
 
 data:
   lookback_days: 120

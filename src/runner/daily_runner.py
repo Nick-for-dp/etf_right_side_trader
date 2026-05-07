@@ -19,7 +19,7 @@ from src.fetcher import DailyFetcher, DataManager
 from src.indicators import MASystem, MACD
 from src.models import OperationAdvice
 from src.risk import RiskController
-from src.service import TradingCalendarService, IndicatorService
+from src.service import TradingCalendarService, IndicatorService, PositionService, QuoteService
 from src.strategy import create_strategy
 from src.utils import get_logger
 
@@ -49,7 +49,7 @@ def run_daily(target_date: date | None = None) -> None:
     _step1_sync_data(config, calendar)
     _step2_calc_indicators(config, t_minus_1)
     _step3_generate_signals(config, t_minus_1)
-    risk_signals = _step4_risk_check()
+    risk_signals = _step4_risk_check(t_minus_1)
     _step5_generate_advice(config, t_minus_1, risk_signals)
 
     dispose_engine()
@@ -130,13 +130,14 @@ def _indicators_to_dataframe(indicators: list) -> pd.DataFrame:
 
 # ── STEP 4 ──
 
-def _step4_risk_check() -> dict[str, dict]:
+def _step4_risk_check(t_minus_1: date) -> dict[str, dict]:
     """检查所有持仓，返回触发风控的信号 {code: {signal, source}}。"""
     positions = positions_repo.find_all()
     if not positions:
         logger.info("STEP4: 无持仓，跳过风控检查")
         return {}
 
+    holding_map = PositionService.get_holding_map()
     controller = RiskController(load_config())
     risk_signals: dict[str, dict] = {}
 
@@ -146,12 +147,19 @@ def _step4_risk_check() -> dict[str, dict]:
             logger.warning(f"STEP4: {pos.code} 无行情数据，跳过风控")
             continue
 
+        entry_date = holding_map.get(pos.code)
+        peak_price = (
+            QuoteService.find_max_close_between(pos.code, entry_date, t_minus_1)
+            if entry_date else None
+        )
+
         pos_dict = {
             "id": pos.id,
             "code": pos.code,
             "cost": float(pos.cost),
             "shares": pos.shares,
             "entry_date": str(pos.entry_date),
+            "peak_price": peak_price,
         }
         result = controller.check_position(pos_dict, latest.close)
         if result is not None:
