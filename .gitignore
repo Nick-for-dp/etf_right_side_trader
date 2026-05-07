@@ -17,6 +17,4 @@ settings.yaml
 data.db
 *.log
 .etf_cache/
-
-# Design docs (not needed for runtime)
-PLAN.md
+CLAUDE.md

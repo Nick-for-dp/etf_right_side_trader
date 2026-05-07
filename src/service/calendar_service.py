@@ -3,7 +3,7 @@
 import exchange_calendars as xcals
 import pandas as pd
 
-from datetime import datetime, timedelta
+from datetime import date as date_type, datetime, timedelta
 from typing import Any, List, Optional
 
 
@@ -41,7 +41,7 @@ class TradingCalendarService:
         """统一日期格式为 'YYYY-MM-DD' 字符串"""
         if isinstance(date, pd.Timestamp):
             return date.strftime('%Y-%m-%d')
-        elif isinstance(date, datetime):
+        elif isinstance(date, (datetime, date_type)):
             return date.strftime('%Y-%m-%d')
         elif isinstance(date, str):
             return date

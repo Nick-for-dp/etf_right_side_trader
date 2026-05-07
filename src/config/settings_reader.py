@@ -9,7 +9,7 @@ import yaml
 from dotenv import load_dotenv
 
 
-_VALID_STRATEGY_TYPES = {"ma_cross"}
+_VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd"}
 _VALID_DB_DRIVERS = {"postgresql", "mysql"}
 
 
@@ -73,11 +73,11 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
     if stype not in _VALID_STRATEGY_TYPES:
         raise ValueError(f"strategy.type 无效: {stype}，仅支持 {_VALID_STRATEGY_TYPES}")
     params = raw.get("params", {})
-    if stype == "ma_cross":
+    if stype in ("ma_cross", "ma_cross_macd"):
         ms = params.get("ma_short", 20)
         ml = params.get("ma_long", 60)
         if not (isinstance(ms, int) and isinstance(ml, int) and 0 < ms < ml):
-            raise ValueError(f"ma_cross 需 0 < ma_short < ma_long，实际: {ms}, {ml}")
+            raise ValueError(f"{stype} 需 0 < ma_short < ma_long，实际: {ms}, {ml}")
         params = {"ma_short": ms, "ma_long": ml}
     return stype, params
 

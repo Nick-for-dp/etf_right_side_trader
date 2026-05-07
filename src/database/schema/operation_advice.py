@@ -19,7 +19,7 @@ class OperationAdviceOrm(Base):
 
     code = Column[str](VARCHAR(20), nullable=False)
     date = Column[date](Date, nullable=False)
-    position_id = Column[int](Integer)
+    position_id = Column[int](Integer, nullable=True)
     cost = Column[Decimal](Numeric[Decimal](12, 4))
     pnl_pct = Column[Decimal](Numeric[Decimal](10, 6))
     signal = Column[str](VARCHAR(10), nullable=False)
@@ -27,7 +27,7 @@ class OperationAdviceOrm(Base):
     signal_source = Column[str](VARCHAR(20))
 
     __table_args__ = (
-        PrimaryKeyConstraint("code", "date", "position_id"),
+        PrimaryKeyConstraint("code", "date"),
     )
 
     def to_model(self) -> OperationAdvice:

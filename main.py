@@ -1,15 +1,17 @@
 """ETF 右侧交易助手 — 统一入口。
 
 用法:
-    python main.py init       首次初始化（建表 + 回填行情 + 计算指标 + 生成信号）
-    python main.py run        执行一次每日流程（STEP 1-5）
-    python main.py schedule   启动每日 07:00 定时调度
-    python main.py dashboard  启动 Streamlit 仪表盘
+    python main.py init                          首次初始化（全量 ETF）
+    python main.py init --symbol 588000          增量回填单只 ETF
+    python main.py init --symbol 588000 --start 2024-01-01
+    python main.py run                           执行一次每日流程（STEP 1-5）
+    python main.py schedule                      启动每日 07:00 定时调度
+    python main.py dashboard                     启动 Streamlit 仪表盘
 """
 
 import argparse
-import os
 import sys
+from datetime import date
 
 
 def main():
@@ -19,7 +21,16 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="首次初始化：建表 + 回填数据")
+    init_parser = sub.add_parser("init", help="初始化：建表 + 回填数据")
+    init_parser.add_argument(
+        "--symbol", type=str, default=None,
+        help="单只 ETF 代码（如 588000），不传则覆盖全部 ETF",
+    )
+    init_parser.add_argument(
+        "--start", type=str, default=None,
+        help="回填起始日期 YYYY-MM-DD，不传则按 lookback_days 推算",
+    )
+
     sub.add_parser("run", help="执行一次每日流程")
     sub.add_parser("schedule", help="启动定时调度")
     sub.add_parser("dashboard", help="启动 Streamlit 仪表盘")
@@ -28,7 +39,8 @@ def main():
 
     if args.command == "init":
         from init_db import init_system
-        init_system()
+        start_date = date.fromisoformat(args.start) if args.start else None
+        init_system(symbol=args.symbol, start_date=start_date)
     elif args.command == "run":
         from src.runner import run_daily
         run_daily()

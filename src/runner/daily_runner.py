@@ -16,7 +16,7 @@ from src.database import (
     indicators_repo, signals_repo, positions_repo, advice_repo, quote_repo,
 )
 from src.fetcher import DailyFetcher, DataManager
-from src.indicators import MASystem
+from src.indicators import MASystem, MACD
 from src.models import OperationAdvice
 from src.risk import RiskController
 from src.service import TradingCalendarService, IndicatorService
@@ -74,6 +74,7 @@ def _step2_calc_indicators(config: AppConfig, t_minus_1: date) -> None:
         ma_short=config.strategy_params.get("ma_short", 20),
         ma_long=config.strategy_params.get("ma_long", 60),
     ))
+    service.register(MACD())
     for etf in config.etf_list:
         n = service.calculate_and_save(etf.symbol, t_minus_1, t_minus_1)
         logger.info(f"STEP2: {etf.symbol} 写入 {n} 条指标")

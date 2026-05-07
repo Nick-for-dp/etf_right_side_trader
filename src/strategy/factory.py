@@ -29,4 +29,11 @@ def create_strategy(config: AppConfig) -> BaseStrategy:
             ma_long=params.get("ma_long", 60),
         )
 
+    if stype == "ma_cross_macd":
+        from src.strategy.ma_cross_macd import MaCrossMacdStrategy
+        return MaCrossMacdStrategy(
+            ma_short=params.get("ma_short", 20),
+            ma_long=params.get("ma_long", 60),
+        )
+
     raise ValueError(f"Unsupported strategy type: {stype}")

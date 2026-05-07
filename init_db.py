@@ -1,7 +1,7 @@
 """系统初始化：建表 → 回填行情 → 计算指标 → 生成信号。
 
-首次运行: python init_db.py
-日常运行: python daily_runner.py  或  python run_scheduler.py
+首次初始化: python main.py init
+增量回填:   python main.py init --symbol 588000 --start 2024-01-01
 """
 
 from datetime import date, timedelta
@@ -10,7 +10,7 @@ from src.config import load_config
 from src.database import init_engine, dispose_engine, indicators_repo, signals_repo
 from src.database.schema import Base
 from src.fetcher import DailyFetcher, DataManager
-from src.indicators import MASystem
+from src.indicators import MASystem, MACD
 from src.runner.daily_runner import _indicators_to_dataframe
 from src.service import TradingCalendarService, IndicatorService
 from src.strategy import create_strategy
@@ -19,7 +19,17 @@ from src.utils import get_logger
 logger = get_logger(__name__)
 
 
-def init_system() -> None:
+def init_system(symbol: str | None = None,
+                start_date: date | None = None) -> None:
+    """建表并回填数据。
+
+    支持全量初始化（无参数）和单只 ETF 增量初始化（--symbol + --start）。
+    已有数据自动跳过，避免重复拉取。
+
+    Args:
+        symbol: 单只 ETF 代码，None 时覆盖配置中全部 ETF
+        start_date: 回填起始日期，None 时按 lookback_days 推算
+    """
     config = load_config()
     engine = init_engine(config.db_url)
 
@@ -31,29 +41,41 @@ def init_system() -> None:
     calendar = TradingCalendarService()
     t_minus_1_str = calendar.get_previous_trading_day()
     t_minus_1 = date.fromisoformat(t_minus_1_str)
-    start_date = t_minus_1 - timedelta(days=config.lookback_days)
+
+    if start_date is None:
+        start_date = t_minus_1 - timedelta(days=config.lookback_days)
+
+    # 确定目标 ETF 列表
+    if symbol:
+        targets = [e for e in config.etf_list if e.symbol == symbol]
+        if not targets:
+            raise ValueError(f"ETF {symbol} 不在 settings.yaml 的 etf_list 中")
+    else:
+        targets = config.etf_list
 
     # 2. 回填行情
     logger.info(f"回填 {start_date} ~ {t_minus_1} 行情数据...")
     fetcher = DailyFetcher()
     dm = DataManager(config, fetcher, calendar)
-    dm.backfill()
+    for etf in targets:
+        dm.backfill(symbol=etf.symbol, start_date=start_date)
 
-    # 3. 回填指标（全量区间，含停牌日自动跳过）
+    # 3. 回填指标
     logger.info(f"回填 {start_date} ~ {t_minus_1} 技术指标...")
     service = IndicatorService()
     service.register(MASystem(
         ma_short=config.strategy_params.get("ma_short", 20),
         ma_long=config.strategy_params.get("ma_long", 60),
     ))
-    for etf in config.etf_list:
+    service.register(MACD())
+    for etf in targets:
         n = service.calculate_and_save(etf.symbol, start_date, t_minus_1)
         logger.info(f"指标: {etf.symbol} 写入 {n} 条")
 
-    # 4. 生成信号（全量区间）
+    # 4. 生成信号
     logger.info(f"生成 {start_date} ~ {t_minus_1} 交易信号...")
     strategy = create_strategy(config)
-    for etf in config.etf_list:
+    for etf in targets:
         indicators = indicators_repo.find_by_code_between(
             etf.symbol, start_date, t_minus_1
         )
@@ -66,7 +88,6 @@ def init_system() -> None:
 
         saved = 0
         for _, row in signal_df.iterrows():
-            # 跳过无有效 MA 的行（窗口不足导致 NaN）
             if row["signal"] == "HOLD" and (
                 "unknown" in str(row.get("signal_meta", {}).get("trend", ""))
             ):
@@ -82,7 +103,7 @@ def init_system() -> None:
         logger.info(f"信号: {etf.symbol} 写入 {saved} 条")
 
     dispose_engine()
-    logger.info("系统初始化完成，可运行 daily_runner.py 或 run_scheduler.py")
+    logger.info("系统初始化完成")
 
 
 if __name__ == "__main__":

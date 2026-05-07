@@ -15,7 +15,7 @@ database:
   driver: "postgresql"
 
 strategy:
-  type: "ma_cross"
+  type: "ma_cross_macd"
   params:
     ma_short: 20
     ma_long: 60

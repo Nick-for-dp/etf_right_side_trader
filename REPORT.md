@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — MVP 技术报告
 
-> 版本 v1.0 MVP | 2026-04-29
+> 版本 v1.1 | 2026-05-06
 
 ---
 
@@ -8,7 +8,7 @@
 
 ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系统。核心理念：不做预测，只做跟随 — 在趋势确认后入场（右侧交易），在趋势反转时离场。
 
-**MVP 策略**：MA20 上穿 MA60（金叉）→ 买入；MA20 下穿 MA60（死叉）→ 卖出；持仓浮亏 ≥ 8% → 强制止损。
+**当前策略（v1.1）**：MA20 上穿 MA60（金叉）且 MACD DIF > 0 → 买入，过滤无动能假突破；MA20 下穿 MA60（死叉）→ 卖出；持仓浮亏 ≥ 8% → 强制止损。
 
 ---
 
@@ -55,7 +55,7 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 | 表 | 职责 | 核心字段 |
 |----|------|----------|
 | `quote` | 日线 OHLCV + NAV | code, date, open, high, low, close, volume, nav, premium_rate |
-| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ...}` |
+| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ..., "dif": ..., "dea": ..., "macd": ...}` |
 | `signals` | 策略信号 + 决策依据 | code, date, signal, strategy_version, signal_meta |
 | `positions` | 用户持仓 | id, code, cost, shares, entry_date |
 | `operation_advice` | 每日操作建议 | code, date, advice, signal_source, pnl_pct |
@@ -72,10 +72,12 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 ### 4.1 信号生成
 
 ```
-MA20 > MA60 且前一日 MA20 ≤ MA60 → BUY（金叉）
-MA20 < MA60 且前一日 MA20 > MA60 → SELL（死叉）
-其他 → HOLD
+金叉（MA20 上穿 MA60）且 DIF > 0 → BUY  （MACD 确认动能方向）
+死叉（MA20 下穿 MA60）           → SELL （卖出不依赖 MACD）
+其他                             → HOLD
 ```
+
+MACD 使用标准公式：`EMA12 - EMA26 → DIF → EMA9(DIF) → DEA`，Wilder 平滑（`adjust=False`），与 TradingView / 主流交易平台口径一致。DIF > 0 表示快线在慢线上方，多方动能主导，可有效过滤均线纠缠期的假突破信号。
 
 按 ETF 代码分组后逐组 shift 判断，避免跨 ETF 的伪交叉。
 
@@ -121,21 +123,23 @@ for rule in risk_rules:
 
 ## 6. 扩展点设计
 
-系统预设三个标准化扩展点：
+系统预设三个标准化扩展点（v1.0 设计，v1.1 已验证）：
 
-1. **策略可替换** — 新增 `strategy/ma_macd.py`，实现 `BaseStrategy` 接口，yaml 改一行 `type: "ma_macd"`，已有指标数据直接复用
+1. **策略可替换** — 新增 `strategy/ma_cross_macd.py`，实现 `BaseStrategy` 接口，yaml 改一行 `type: "ma_cross_macd"`，已有指标数据直接复用 ✅
 2. **风控可插拔** — 新增 `risk/take_profit.py`，实现 `BaseRiskRule`，yaml 加一项 rule，链式自动执行
-3. **指标可追加** — 新增 `indicators/macd.py`，实现 `BaseIndicator`，返回的 DataFrame 列自动 merge 进 JSONB
+3. **指标可追加** — 已有 `indicators/macd.py`，实现 `BaseIndicator`，返回的 DataFrame 列自动 merge 进 JSONB ✅
 
 ---
 
 ## 7. API 设计（命令行）
 
 ```bash
-python main.py init         # 首次初始化：建表 + 回填行情 + 计算指标 + 生成信号
-python main.py run          # 执行一次每日流程（STEP 1-5）
-python main.py schedule     # 启动每日 07:00 定时调度（APScheduler）
-python main.py dashboard    # 启动 Streamlit 仪表盘（localhost:8501）
+python main.py init                              # 首次初始化：建表 + 回填 + 指标 + 信号
+python main.py init --symbol 588000              # 增量回填单只 ETF
+python main.py init --symbol 588000 --start 2024-01-01
+python main.py run                               # 执行一次每日流程（STEP 1-5）
+python main.py schedule                          # 启动每日 07:00 定时调度（APScheduler）
+python main.py dashboard                         # 启动 Streamlit 仪表盘（localhost:8501）
 ```
 
 ---
@@ -178,18 +182,13 @@ python main.py dashboard    # 启动 Streamlit 仪表盘（localhost:8501）
 
 **建议方案**：新增 `performance` 模块，跟踪每条信号发出后 N 日的实际收益，生成信号准确率报表。可参考现有 `operation_advice` 表结构，增加 `pnl_after_n_days` 等跟踪字段。
 
-### 10.2 ETF 列表扩充与完整初始化逻辑
+### 10.2 回撤止盈
 
-当前系统通过 `init_db.py` 一次性回填所有 ETF 的历史数据。但 `init_db.py` 的 `backfill` 逻辑是针对 `settings.yaml` 中配置的全部 ETF 执行全量回填，缺少以下能力：
+持仓浮盈达 10% 后，若回撤至 5% 触发止盈卖出。新增 `risk/trailing_stop.py`，yaml 加一项 rule，现有风控插件链自动执行。
 
-- **增量添加**：新增一只 ETF 到配置后，无法仅对该 ETF 执行回填，必须全量重跑
-- **回填日期控制**：无法指定回填的起止日期，默认逻辑可能与已有数据冲突
-- **缺少幂等性保证**：重复执行 `init` 可能产生重复数据（虽然 `ON CONFLICT DO NOTHING` 部分缓解，但指标和信号没有去重逻辑）
+### 10.3 仪表盘 MACD 展示
 
-**建议方案**：
-1. 重构 `init_db.py` 为 `python main.py init --symbol 588000 --start 2024-01-01` 形式，支持指定 ETF 和日期区间
-2. `init` 命令检测已有数据，自动跳过已存在的日期范围
-3. 将回填逻辑从 `init_db.py` 迁移到 `DataManager`，作为 `backfill(code, start, end)` 方法
+Streamlit ETF 详情页当前仅展示 K 线 + MA20/MA60 + 信号标记。可增加 MACD 副图（DIF/DEA/MACD 柱），提升决策可视化。
 
 ---
 
@@ -217,8 +216,8 @@ etf_right_side_trader/
 │   │   ├── schema/                 # SQLAlchemy ORM（含 to_model / to_orm）
 │   │   └── repository/             # 纯数据访问（一张表一个文件）
 │   ├── fetcher/                    # 数据采集（BaoStock + AKShare）
-│   ├── indicators/                 # 技术指标（DataFrame in/out）
-│   ├── strategy/                   # 策略信号（工厂模式）
+│   ├── indicators/                 # 技术指标 MA + MACD（DataFrame in/out）
+│   ├── strategy/                   # 策略信号（工厂模式，ma_cross / ma_cross_macd）
 │   ├── risk/                       # 风控规则链（插件模式）
 │   ├── advisor/                    # 操作建议（持仓 × 信号 查表）
 │   ├── runner/                     # 核心编排 STEP 1-5

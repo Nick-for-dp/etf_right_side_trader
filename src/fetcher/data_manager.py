@@ -60,24 +60,37 @@ class DataManager:
             logger.info(f"sync_daily: {etf.symbol} 写入 {n} 条, "
                         f"{start_date.isoformat()} ~ {t_minus_1}")
 
-    def backfill(self, symbol: str | None = None) -> None:
-        """全量回填历史数据。
+    def backfill(self, symbol: str | None = None,
+                 start_date: date | None = None) -> None:
+        """回填历史数据，自动跳过已覆盖的日期范围。
 
         Args:
             symbol: 指定 ETF 代码，为 None 时回填配置中所有 ETF
+            start_date: 自定义起始日期，为 None 时按 lookback_days 推算
 
         Returns:
             None
         """
         t_minus_1 = self.calendar.get_previous_trading_day()
         t_minus_1_date = date.fromisoformat(t_minus_1)
-        start_date = t_minus_1_date - timedelta(days=self.config.lookback_days)
+
+        if start_date is None:
+            start_date = t_minus_1_date - timedelta(days=self.config.lookback_days)
 
         targets = [symbol] if symbol else [e.symbol for e in self.config.etf_list]
         for s in targets:
-            n = self._fetch_and_save(s, start_date.isoformat(), t_minus_1)
+            latest = quote_repo.find_latest_date(s)
+            if latest and latest >= t_minus_1_date:
+                logger.info(f"backfill: {s} 数据已完整 ({latest})，跳过")
+                continue
+
+            fetch_start = start_date
+            if latest and latest >= fetch_start:
+                fetch_start = latest + timedelta(days=1)
+
+            n = self._fetch_and_save(s, fetch_start.isoformat(), t_minus_1)
             logger.info(f"backfill: {s} 写入 {n} 条, "
-                        f"{start_date.isoformat()} ~ {t_minus_1}")
+                        f"{fetch_start.isoformat()} ~ {t_minus_1}")
 
     # ── 内部 ──
 
