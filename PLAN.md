@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — 设计文档
 
-> v1.0 MVP 已完成（2026-04-29），v1.1 已完成（2026-05-06），本文档聚焦架构设计 + 后续规划。
+> v1.0 MVP 已完成（2026-04-29），v1.1 已完成（2026-05-06），v1.2 已完成（2026-05-08），本文档聚焦架构设计 + 后续规划。
 
 ---
 
@@ -55,28 +55,31 @@ config/（YAML + .env）
 - 自动检测已有数据，跳过已覆盖的日期范围
 - 回填逻辑已迁移到 `DataManager` 中，`init_system` 可直接传参调用
 
-### v1.2 — 回撤止盈 + 盈利分析 🔨（2026-05-07 启动）
+### v1.2 — 回撤止盈 + 盈利分析 ✅（2026-05-08 完成）
 
 **Day 1：回撤止盈 ✅（2026-05-07 完成）**
 
 新增 `risk/trailing_stop.py`：浮盈 10% 激活，从持仓期间最高点回撤 3% 触发 SELL。与止损规则在 `RiskController` 中链式执行，短路返回。新增 `service/quote_service.py`（`QuoteService.find_max_close_between`）+ `PositionService.get_holding_map` 为规则提供峰值数据，不改 `BaseRiskRule` 接口。
 
-**Day 2：盈利分析模块**
+**Day 2：虚拟回测盈亏分析 ✅（2026-05-08 完成）**
 
-新增 `performance/`（纯分析，不写库）：
+基于 `operation_advice` 历史重建虚拟交易对，状态机遍历建仓→加仓→卖出周期，以 advice 生成当日收盘价作为虚拟成交价。纯分析层，不新增数据库表。
 
-- `forward_return.py` — `ForwardReturnCalculator`：给定 ETF + BUY 信号日期，从 `quote` 表查 T+N 日收盘价，计算前向收益，N ∈ {5, 10, 20}
-- `analyzer.py` — `PerformanceAnalyzer`：按 ETF / 策略版本 / 时间段分组统计胜率、平均收益、中位数收益
-- `models/performance.py` — pydantic 展示模型，不入库
-- `dashboard/` — 新增"策略评估"标签页
-
-数据来源全部复用已有 `signals` + `quote` 表，不新增数据库表。
+- `models/virtual_trade.py` — `VirtualTrade` pydantic 模型（exit_date 为空表示未平仓）
+- `service/profit_analysis_service.py` — `reconstruct_trades(code, calendar)` 全量历史重建 + `calculate_equity_curve` + `get_summary`
+- `dashboard/pnl.py` — 盈亏分析页：汇总指标 + 已平仓明细 + 当前持仓 + 资金曲线，日期过滤在展示层
+- `advice_repo.find_by_code` / `quote_repo.find_by_code_in_range` — 按代码查询方法
 
 ### v2.0 — 多指标综合评分
 
 - 新增布林带、RSI、成交量指标
 - 七趋势状态机 + 加权评分策略
 - 策略输出综合评分而非简单 BUY/SELL
+
+### v2.1 — 待办
+
+- **LLM 基本面分析**：引入 LLM 对 ETF 基本面（宏观经济、行业政策、资金流向等）进行分析，作为策略信号的辅助确认维度
+- **完善操作建议映射**：补充 空仓 + SELL → 持有 映射（卖出信号但无持仓时不操作），确保四个组合全部覆盖
 
 ---
 

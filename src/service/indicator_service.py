@@ -54,7 +54,7 @@ class IndicatorService:
 
         # 拉取足够历史的行情数据
         fetch_start = calc_start - timedelta(days=_LOOKBACK_PADDING)
-        quotes = quote_repo.find_by_code_between(code, fetch_start, calc_end)
+        quotes = quote_repo.find_by_code_in_range(code, fetch_start, calc_end)
         if not quotes:
             logger.warning(f"{code} 在 {fetch_start} ~ {calc_end} 无行情数据，跳过。")
             return 0

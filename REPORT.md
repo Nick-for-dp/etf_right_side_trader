@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — MVP 技术报告
 
-> 版本 v1.2 Day 1 完成 | 2026-05-07
+> 版本 v1.2 完成 | 2026-05-08
 
 ---
 
@@ -22,7 +22,7 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 │          init / run / schedule / dashboard           │
 ├─────────────────────────────────────────────────────┤
 │  dashboard/（Streamlit UI）                           │
-│  overview.py | positions.py | detail.py              │
+│  overview.py | positions.py | detail.py | pnl.py     │
 ├─────────────────────────────────────────────────────┤
 │  runner/（核心编排）                                   │
 │  STEP 1-5: 同步 → 指标 → 信号 → 风控 → 建议           │
@@ -33,7 +33,7 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 │  advisor/（操作建议查表映射）                           │
 ├─────────────────────────────────────────────────────┤
 │  service/（业务编排）                                                       │
-│  TradingCalendar | IndicatorService | PositionService | QuoteService │
+│  TradingCalendar | IndicatorService | PositionService | QuoteService | ProfitAnalysis │
 ├─────────────────────────────────────────────────────┤
 │  database/                                           │
 │  ORM schema ←→ pydantic models ←→ repository        │
@@ -160,6 +160,7 @@ python main.py dashboard                         # 启动 Streamlit 仪表盘（
 | 市场总览 | 全部 ETF 最新信号表格，分类筛选，BUY/SELL 颜色高亮 |
 | 我的持仓 | 建仓/加仓/减仓，均价自动重算，实时浮动盈亏 |
 | ETF 详情 | K 线图 + MA20/MA60 + 信号标记 + 成交量 + 指标卡片 |
+| 盈亏分析 | 虚拟回测：汇总指标、已平仓交易明细、当前虚拟持仓、资金曲线 |
 
 ---
 
@@ -185,9 +186,16 @@ python main.py dashboard                         # 启动 Streamlit 仪表盘（
 
 新增 `risk/trailing_stop.py` + `service/quote_service.py`，浮盈 10% 后回撤 3% 触发止盈。与止损规则链式执行。
 
-### 10.2 盈利分析模块（v1.2 Day 2，待开发）
+### 10.2 虚拟回测盈亏分析 ✅（v1.2 Day 2，2026-05-08 完成，2026-05-09 优化）
 
-新增 `performance/` 纯分析模块，追踪 BUY 信号发出后 N 日前向收益，按 ETF / 策略版本 / 时间段分组统计胜率。不新增数据库表，数据源复用 `signals` + `quote`。
+基于 `operation_advice` 历史记录重建虚拟交易对：遍历 advice → 状态机匹配建仓/加仓/卖出 → 以 advice 生成当日收盘价作为虚拟成交价 → 结算已平仓交易盈亏 + 追踪未平仓浮动盈亏。
+
+纯分析层，不新增数据库表。输出：
+- `VirtualTrade` 模型（`exit_date` 为空 = 未平仓，有值 = 已平仓）
+- `reconstruct_trades(code, calendar)` — 按 ETF 全量历史重建，无需指定日期范围；dashboard 层按需过滤
+- `calculate_equity_curve(codes, calendar, start, end)` — 逐日模拟资金曲线
+- `get_summary(trades)` — 胜率 / 累计盈亏 / 最大盈亏等指标
+- Dashboard "盈亏分析"页：汇总卡片 + 已平仓明细表 + 当前虚拟持仓 + 资金曲线图
 
 ### 10.3 仪表盘 MACD 展示
 
@@ -213,7 +221,7 @@ etf_right_side_trader/
 ├── PLAN.md                         # 初始设计文档
 ├── src/
 │   ├── config/                     # YAML + .env 双源配置加载
-│   ├── models/                     # pydantic 业务模型（5 表）
+│   ├── models/                     # pydantic 业务模型（6 个）
 │   ├── database/
 │   │   ├── connection.py           # engine 单例 + scoped_session
 │   │   ├── schema/                 # SQLAlchemy ORM（含 to_model / to_orm）
@@ -225,8 +233,8 @@ etf_right_side_trader/
 │   ├── advisor/                    # 操作建议（持仓 × 信号 查表）
 │   ├── runner/                     # 核心编排 STEP 1-5
 │   ├── scheduler/                  # APScheduler 定时调度
-│   ├── service/                    # 日历 / 指标编排 / 持仓管理 / 行情查询（4 个 service）
-│   ├── dashboard/                  # Streamlit 仪表盘（3 页）
+│   ├── service/                    # 日历 / 指标编排 / 持仓管理 / 行情查询 / 盈亏分析（5 个 service）
+│   ├── dashboard/                  # Streamlit 仪表盘（4 页）
 │   └── utils/                      # 日志 / 限流工具
 └── tests/
 ```

@@ -33,7 +33,7 @@ def save_batch(records: list[Quote]) -> None:
         session.close()
 
 
-def find_by_code_between(code: str, start: date | None = None,
+def find_by_code_in_range(code: str, start: date | None = None,
                          end: date | None = None) -> list[Quote]:
     """按 ETF 代码和日期区间查询行情。
 

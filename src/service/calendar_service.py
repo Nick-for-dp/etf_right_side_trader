@@ -203,56 +203,43 @@ class TradingCalendarService:
 
     # ================= 功能 5: 获取下一个交易日 =================
     def get_next_trading_day(self, date=None) -> Optional[str]:
-        """获取下一个交易日。
+        """获取指定日期之后的下一个交易日。
 
         Args:
-            date: 基准日期，默认为今天
+            date: 基准日期（可以是交易日或非交易日），默认为今天
 
         Returns:
             下一个交易日 'YYYY-MM-DD'，超出日历范围返回 None
-
-        Example:
-            >>> calendar = TradingCalendarService()
-            >>> calendar.get_next_trading_day("2026-04-28")
-            '2026-04-29'
         """
         if date is None:
             date = datetime.now()
-            
-        current_ts = self._to_timestamp(date)
-        
-        try:
-            next_session = self.cal.next_session(current_ts)
-            return next_session.strftime('%Y-%m-%d')
-        except:
-            # 超出日历范围（如查询太远的未来）
-            return None
-    
+        date_str = self._to_date_str(date)
+        self._ensure_cache_covers(date_str)
+
+        for td in self._trading_days_list:
+            if td > date_str:
+                return td
+        return None
+
     # ================= 附加功能：获取上一个交易日 =================
     def get_previous_trading_day(self, date=None) -> Optional[str]:
-        """获取上一个交易日（用于 T-1 信号日）。
+        """获取指定日期之前的上一个交易日。
 
         Args:
-            date: 基准日期，默认为今天
+            date: 基准日期（可以是交易日或非交易日），默认为今天
 
         Returns:
             上一个交易日 'YYYY-MM-DD'，超出日历范围返回 None
-
-        Example:
-            >>> calendar = TradingCalendarService()
-            >>> calendar.get_previous_trading_day("2026-04-28")
-            '2026-04-27'
         """
         if date is None:
             date = datetime.now()
-            
-        current_ts = self._to_timestamp(date)
-        
-        try:
-            prev_session = self.cal.previous_session(current_ts)
-            return prev_session.strftime('%Y-%m-%d')
-        except:
-            return None
+        date_str = self._to_date_str(date)
+        self._ensure_cache_covers(date_str)
+
+        for td in reversed(self._trading_days_list):
+            if td < date_str:
+                return td
+        return None
 
 
 if __name__ == "__main__":

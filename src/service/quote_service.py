@@ -20,7 +20,7 @@ class QuoteService:
         Returns:
             区间最高收盘价，无数据时返回 None
         """
-        quotes = quote_repo.find_by_code_between(code, start, end)
+        quotes = quote_repo.find_by_code_in_range(code, start, end)
         if not quotes:
             return None
         return max(q.close for q in quotes)

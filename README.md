@@ -1,6 +1,6 @@
 # ETF 右侧交易助手
 
-> 基于 MA20/60 双均线交叉 + MACD 辅助确认的 ETF 趋势跟踪系统，v1.2 Day 1 完成。
+> 基于 MA20/60 双均线交叉 + MACD 辅助确认的 ETF 趋势跟踪系统，v1.2 完成。
 
 ## 交易策略
 
@@ -44,8 +44,8 @@ etf_right_side_trader/
 │   ├── advisor/                # 信号 × 持仓 → 操作建议（策略无关）
 │   ├── runner/                 # 核心编排：串联 STEP 1-5
 │   ├── scheduler/              # APScheduler 定时任务
-│   ├── service/                # 交易日历 / 指标编排 / 持仓管理
-│   ├── dashboard/              # Streamlit 仪表盘（3 个标签页）
+│   ├── service/                # 交易日历 / 指标编排 / 持仓管理 / 盈亏分析
+│   ├── dashboard/              # Streamlit 仪表盘（4 个标签页）
 │   └── utils/                  # 日志 / 限流
 └── tests/
 ```
@@ -95,6 +95,7 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 | 市场总览 | 全部 ETF 最新信号表格，分类筛选，BUY/SELL 颜色高亮 |
 | 我的持仓 | 建仓/加仓（均价自动重算）/减仓，实时浮动盈亏，操作建议 |
 | ETF 详情 | K线图 + MA20/MA60 + BUY/SELL 信号标记 + 成交量 + 指标卡片 |
+| 盈亏分析 | 基于策略建议的虚拟回测：汇总指标、已平仓交易明细、当前持仓、资金曲线 |
 
 ## 已实现
 
@@ -110,9 +111,10 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 - [x] 核心编排：STEP 1-5 自动化
 - [x] 定时调度：APScheduler 每日 07:00
 - [x] 数据初始化：一键建表 + 全量/增量回填（`--symbol` + `--start`）
-- [x] 仪表盘：3 标签页 Streamlit UI
+- [x] 仪表盘：4 标签页 Streamlit UI
 - [x] 持仓管理：建仓/加仓均价重算/减仓
-- [x] MACD 指标全量落地：dif / dea / macd 三线存入 JSONB，v2.0 策略直接复用
+- [x] MACD 指标全量落地：dif / dea / macd 三线存入 JSONB
+- [x] 盈亏分析：基于策略建议的虚拟回测（建仓→卖出配对、资金曲线、胜率统计）
 
 ## 三个扩展点
 
@@ -125,13 +127,6 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 | 版本 | 目标 | 状态 |
 |------|------|------|
 | v1.1 | MACD 辅助确认（金叉 + DIF > 0 才买）+ ETF 增量初始化 | ✅ |
-| v1.2 | 回撤止盈（浮盈 10% 后回撤 3% 触发）✅ + 盈利分析 🔨 | 开发中 |
+| v1.2 | 回撤止盈（浮盈 10% 后回撤 3% 触发）+ 虚拟回测盈亏分析 | ✅ |
 | v2.0 | 多指标综合评分（布林带 / RSI / 成交量） | 规划中 |
 | v3.0 | 回测框架 + 参数优化 | 规划中 |
-
-## 待完成
-
-- [ ] 盈利分析模块（`performance/`）：信号前向收益追踪 + 胜率统计
-- [ ] 仪表盘 MACD 副图
-
-详见 [REPORT.md](./REPORT.md) 第 10 节。

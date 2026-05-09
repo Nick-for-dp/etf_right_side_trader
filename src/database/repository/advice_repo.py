@@ -33,6 +33,23 @@ def save_batch(records: list[OperationAdvice]) -> None:
         session.close()
 
 
+def find_by_code(code: str) -> list[OperationAdvice]:
+    """按 ETF 代码查询全部操作建议。
+
+    Args:
+        code: ETF 代码
+
+    Returns:
+        按日期升序排列的 OperationAdvice 列表
+    """
+    session = get_session()
+    try:
+        q = session.query(OperationAdviceOrm).filter(OperationAdviceOrm.code == code)
+        return [r.to_model() for r in q.order_by(OperationAdviceOrm.date.asc()).all()]
+    finally:
+        session.close()
+
+
 def find_by_date(date: date) -> list[OperationAdvice]:
     """查询某日全部操作建议。
 

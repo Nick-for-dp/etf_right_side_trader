@@ -42,7 +42,7 @@ def run():
         st.error("开始日期必须早于结束日期")
         return
 
-    quotes = quote_repo.find_by_code_between(symbol, start_date, end_date)
+    quotes = quote_repo.find_by_code_in_range(symbol, start_date, end_date)
     indicators = indicators_repo.find_by_code_between(symbol, start_date, end_date)
     signals = signals_repo.find_by_code_between(symbol, start_date, end_date)
 
