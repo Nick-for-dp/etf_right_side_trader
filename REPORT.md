@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — MVP 技术报告
 
-> 版本 v1.2 完成 | 2026-05-08
+> 版本 v1.2 完成，v2.0 S1-S3 已完成 | 2026-05-12
 
 ---
 
@@ -8,7 +8,9 @@
 
 ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系统。核心理念：不做预测，只做跟随 — 在趋势确认后入场（右侧交易），在趋势反转时离场。
 
-**当前策略（v1.1）**：MA20 上穿 MA60（金叉）且 MACD DIF > 0 → 买入，过滤无动能假突破；MA20 下穿 MA60（死叉）→ 卖出。
+**当前策略（v1.1，生产环境）**：MA20 上穿 MA60（金叉）且 MACD DIF > 0 → 买入，过滤无动能假突破；MA20 下穿 MA60（死叉）→ 卖出。
+
+**V2.0 策略（开发中，S1-S3 已完成）**：多指标综合评分，四个子信号（趋势/动能/RSI/布林带）加权求和 → -100~+100 连续评分，替代 BUY/SELL/HOLD 离散信号。不做趋势状态机，连续函数直接算分。
 
 **风控（v1.2）**：两条规则链式执行 — ① 止损：浮亏 ≥ 8% 强制卖出；② 回撤止盈：浮盈触及 10% 后从最高点回撤 ≥ 3% 触发卖出。
 
@@ -57,7 +59,7 @@ ETF 右侧交易助手是一个基于 MA 双均线交叉的趋势跟踪量化系
 | 表 | 职责 | 核心字段 |
 |----|------|----------|
 | `quote` | 日线 OHLCV + NAV | code, date, open, high, low, close, volume, nav, premium_rate |
-| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ..., "dif": ..., "dea": ..., "macd": ...}` |
+| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ..., "dif": ..., "dea": ..., "macd": ..., "bb_mid": ..., "rsi": ..., "vol_ratio": ...}` |
 | `signals` | 策略信号 + 决策依据 | code, date, signal, strategy_version, signal_meta |
 | `positions` | 用户持仓 | id, code, cost, shares, entry_date |
 | `operation_advice` | 每日操作建议 | code, date, advice, signal_source, pnl_pct |
@@ -197,9 +199,18 @@ python main.py dashboard                         # 启动 Streamlit 仪表盘（
 - `get_summary(trades)` — 胜率 / 累计盈亏 / 最大盈亏等指标
 - Dashboard "盈亏分析"页：汇总卡片 + 已平仓明细表 + 当前虚拟持仓 + 资金曲线图
 
-### 10.3 仪表盘 MACD 展示
+### 10.3 多指标综合评分（v2.0 S1-S3 ✅，S4 待实施）
 
-Streamlit ETF 详情页当前仅展示 K 线 + MA20/MA60 + 信号标记。可增加 MACD 副图（DIF/DEA/MACD 柱），提升决策可视化。
+**S1-S3 新增指标 ✅（2026-05-12 完成）**：
+- `indicators/bollinger.py` — MA20 中轨 + 2σ 通道 + bb_width 带宽
+- `indicators/rsi.py` — Wilder 平滑 RSI-14
+- `indicators/volume.py` — 20 日均量 + vol_ratio 量比
+- `IndicatorService` 改造传入完整 OHLCV（含 volume），向后兼容
+- 9 个单元测试全部通过
+
+**S4 综合评分（待实施）**：四子信号加权求和，连续评分 -100~+100，adviser 层读 score 做阈值映射。不做趋势状态机——从实用主义出发摒弃"离散分类再查表"的中间层。
+
+**S5-S7（待实施）**：指标回填 + Dashboard 副图更新 + v1.2 vs v2.0 回测对比
 
 ---
 
@@ -227,7 +238,7 @@ etf_right_side_trader/
 │   │   ├── schema/                 # SQLAlchemy ORM（含 to_model / to_orm）
 │   │   └── repository/             # 纯数据访问（一张表一个文件）
 │   ├── fetcher/                    # 数据采集（BaoStock + AKShare）
-│   ├── indicators/                 # 技术指标 MA + MACD（DataFrame in/out）
+│   ├── indicators/                 # 技术指标：MA / MACD / 布林带 / RSI / 成交量（DataFrame in/out）
 │   ├── strategy/                   # 策略信号（工厂模式，ma_cross / ma_cross_macd）
 │   ├── risk/                       # 风控规则链（插件模式）
 │   ├── advisor/                    # 操作建议（持仓 × 信号 查表）

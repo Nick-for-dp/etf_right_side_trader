@@ -18,3 +18,4 @@ data.db
 *.log
 .etf_cache/
 CLAUDE.md
+temp_plan.md

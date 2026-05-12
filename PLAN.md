@@ -72,9 +72,106 @@ config/（YAML + .env）
 
 ### v2.0 — 多指标综合评分
 
-- 新增布林带、RSI、成交量指标
-- 七趋势状态机 + 加权评分策略
-- 策略输出综合评分而非简单 BUY/SELL
+**目标**：从单信号判断升级为多维度加权评分，策略输出 -100~+100 综合评分替代 BUY/SELL/HOLD。
+
+**设计原则**：不做"离散状态机先分类再查表"——把连续信息压缩成枚举值再还原是纯信息损失。每个指标通过连续映射函数直接产出 [-1, 1] 子信号，加权求和后 ×100 得到评分。阈值只影响展示标签，不影响决策值。
+
+**依赖关系**：S1-S3 并行 → S4 → S5-S7 并行
+
+#### Phase 1：新增三个指标（S1-S3，可并行）✅ 已完成
+
+| 步骤 | 模块 | 说明 |
+|------|------|------|
+| **S1** | `indicators/bollinger.py` | 布林带：中轨 MA20、上下轨 ±2σ，输出 `bb_mid/bb_upper/bb_lower/bb_width` |
+| **S2** | `indicators/rsi.py` | RSI-14，Wilder 平滑，输出 `rsi` |
+| **S3** | `indicators/volume.py` | 成交量 MA（20 日均量）、量比 `vol_ratio` |
+
+三个指标均实现 `BaseIndicator.calculate(df) -> DataFrame`，互不依赖。
+
+#### Phase 2：综合评分策略（S4）
+
+| **S4** | `strategy/multi_indicator_scoring.py` | 依赖 S1-S3 |
+
+策略输出 -100~+100 连续评分。评分公式：
+
+```
+score = (w₁·S_trend + w₂·S_macd + w₃·S_rsi + w₄·S_bb) × 100   ∈ [-100, 100]
+
+默认权重：w₁=0.45  w₂=0.30  w₃=0.15  w₄=0.10（sum=1.0，settings.yaml 可配）
+```
+
+Volume 不作为独立子信号，而是作为**乘数**作用在整个 score 上：
+
+```
+score_final = score × clamp(vol_ratio^0.3, 0.75, 1.25)
+```
+
+放量放大分数，缩量压低分数，±25% 封顶。幂次 0.3 抑制极端量比杠杆效应。
+
+##### 子信号设计
+
+**S_trend（0.45）— 趋势方向与强度，系统锚点**
+
+```
+S_trend = clamp(spread×25 + position×15, -1, 1)
+spread   = (ma20 - ma60) / ma60      # 均线乖离率
+position = (close - ma20) / ma20     # 价格距短期均线
+```
+
+均线排列决定方向，其他三个指标只做确认和修正。2% 乖离+1.3% 溢价触及 cap，>3% 乖离持续顶 cap——强趋势中系统坚定持有，不因"趋势太强"而退缩。
+
+**S_macd（0.30）— 动能确认**
+
+```
+S_macd = clamp(dif_norm×3 + macd_hist_norm×1.5, -1, 1)
+dif_norm      = DIF / close
+macd_hist_norm = (DIF - DEA) / close
+```
+
+连续替代 v1.1 的 `DIF > 0` 硬条件：DIF 为负自然拖累总分，DIF 接近 0 时贡献中性由趋势主导。MACD 柱提供加速度信号——柱线放大推高分，柱线收窄向 0 回归。
+
+**S_rsi（0.15）— 超买超卖修正**
+
+```
+S_rsi = clamp((rsi-50)/20, -1, 1) × decay(|rsi-50|, center=20, width=10)
+decay(x, c, w) = 1 / (1 + exp((x-c)/w))
+```
+
+RSI 45-55 线性映射贡献小，RSI>60 或 <40 区 sigmoid 衰减因子生效——超买超卖区边际贡献递减，避免在极端区域盲目追涨杀跌。R²=80 也只能拉低总分约 13 点，不足以翻转强趋势，但足以在趋势+动能双弱时推到负值触发卖出。
+
+**S_bb（0.10）— 波动率位置**
+
+```
+S_bb = clamp((pos_in_band-0.5)×2, -1, 1)
+pos_in_band = (close - bb_lower) / (bb_upper - bb_lower)
+```
+
+权重最低——布林带位置与趋势方向高度共线，S_trend 已经给了正向分数。主要作用是在震荡市（S_trend≈0）中提供边际信息。
+
+##### 与 advisor 层对接
+
+默认阈值（yaml 可配）：
+
+```
+score ≥ +30  → BUY   (建仓/加仓)
+score ≤ −30  → SELL  (清仓)
+−30 < score < +30 → HOLD (观望/持有)
+```
+
+±30 阈值意味着需要至少两个子信号同时指向同一方向才能触发操作。advisor 层从查 `signal` 字段改为读 `score` 数值做阈值映射。
+
+#### Phase 3：集成与验证（S5-S7，可并行）
+
+| **S5** | 指标增量回填 | `IndicatorService` 注册新指标，`init --symbol` 增量回填历史数据 |
+| **S6** | Dashboard 更新 | 详情页新增布林带/RSI/成交量副图，信号展示改为评分曲线 |
+| **S7** | 回测对比 | 用 `profit_analysis_service` 跑 V1.2 vs V2.0 同期对比，验证升级效果 |
+
+#### 关键设计决策（已定）
+
+1. 不做趋势状态机——连续函数直接算分，不经过离散分类
+2. 权重和评分阈值通过 `settings.yaml` 可配置，S4 实施时新增配置项
+3. V2.0 策略通过 `strategy.factory` 新增 `"multi_indicator_scoring"` 类型，与 V1.x 共存
+4. 信号表 `signal` 字段存储 score 数值，`signal_meta` JSONB 存储四个子信号分解值，便于调试和回测
 
 ### v2.1 — 待办
 

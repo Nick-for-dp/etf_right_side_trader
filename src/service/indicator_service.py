@@ -61,7 +61,14 @@ class IndicatorService:
 
         # 转 DataFrame，按 date 升序
         price_df = pd.DataFrame(
-            [{"date": str(q.date), "close": q.close} for q in quotes]
+            [{
+                "date": str(q.date),
+                "open": q.open,
+                "high": q.high,
+                "low": q.low,
+                "close": q.close,
+                "volume": q.volume,
+            } for q in quotes]
         ).sort_values("date").reset_index(drop=True)
 
         # 逐个计算器计算，按 date 左连接合并

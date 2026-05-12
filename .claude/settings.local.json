@@ -10,7 +10,8 @@
       "WebFetch(domain:localhost)",
       "Bash(curl -s http://localhost:8501/)",
       "Bash(curl -s http://localhost:8501/_stcore/host-config)",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(uv add *)"
     ]
   }
 }

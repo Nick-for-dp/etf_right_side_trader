@@ -1,15 +1,18 @@
 # ETF 右侧交易助手
 
-> 基于 MA20/60 双均线交叉 + MACD 辅助确认的 ETF 趋势跟踪系统，v1.2 完成。
+> 基于 MA20/60 双均线交叉 + MACD 辅助确认的 ETF 趋势跟踪系统，v1.2 完成，v2.0 开发中。
 
 ## 交易策略
 
+**V1.x（生产环境）**：
 ```
 趋势判断：MA20 > MA60 → 上升；MA20 < MA60 → 下降
 买入信号：MA20 上穿 MA60（金叉）且 MACD DIF > 0（过滤无动能假突破）
 卖出信号：MA20 下穿 MA60（死叉）
 风控覆盖：① 止损 — 浮亏 ≥ 8% 强制卖出；② 回撤止盈 — 浮盈 10% 后回撤 3% 强制卖出
 ```
+
+**V2.0（开发中）**：多指标综合评分，趋势/动能/RSI/布林带四子信号加权求和 → -100~+100 连续评分，连续函数直接算分不做状态机。Volume 作为置信度乘数。
 
 操作建议映射：
 
@@ -38,7 +41,7 @@ etf_right_side_trader/
 │   │   ├── schema/             # ORM 映射（含 to_model / to_orm）
 │   │   └── repository/         # 纯数据访问层，一张表一个文件
 │   ├── fetcher/                # 数据采集（BaoStock + AKShare → OHLCV + NAV）
-│   ├── indicators/             # 技术指标计算（MA + MACD，DataFrame in/out）
+│   ├── indicators/             # 技术指标：MA / MACD / 布林带 / RSI / 成交量（DataFrame in/out）
 │   ├── strategy/               # 策略信号生成（工厂模式，可替换）
 │   ├── risk/                   # 风控规则链（插件模式）
 │   ├── advisor/                # 信号 × 持仓 → 操作建议（策略无关）
@@ -55,7 +58,7 @@ etf_right_side_trader/
 | 表 | 职责 | 核心字段 |
 |----|------|----------|
 | `quote` | 日线 OHLCV + NAV | code, date, open, high, low, close, volume, nav, premium_rate |
-| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ..., "dif": ..., "dea": ..., "macd": ...}` |
+| `indicators` | 技术指标快照（JSONB） | code, date, data `{"ma20": ..., "ma60": ..., "dif": ..., "rsi": ..., "bb_mid": ..., "vol_ratio": ...}` |
 | `signals` | 策略信号 + 决策依据 | code, date, signal, strategy_version, signal_meta |
 | `positions` | 用户持仓 | id, code, cost, shares, entry_date |
 | `operation_advice` | 每日操作建议 | code, date, advice, signal_source, pnl_pct |
@@ -104,7 +107,7 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 - [x] 连接池：SQLAlchemy engine 单例，pool_pre_ping + scoped_session
 - [x] 数据采集：BaoStock OHLCV + AKShare NAV 合并，溢价率计算
 - [x] 交易日历：exchange_calendars 封装
-- [x] 指标计算：MA20/MA60 + MACD（DIF/DEA/MACD柱），BaseIndicator 抽象，IndicatorService 编排
+- [x] 指标计算：MA20/MA60 + MACD（DIF/DEA/MACD柱） + 布林带 + RSI-14 + 成交量，BaseIndicator 抽象，IndicatorService 编排
 - [x] 信号生成：双均线交叉 + MACD 确认策略（金叉+DIF>0→BUY / 死叉→SELL），工厂模式
 - [x] 风控系统：8% 止损 + 回撤止盈（10%/3%），插件链模式
 - [x] 操作建议：持仓 × 信号查表映射，风控信号优先
@@ -128,5 +131,6 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 |------|------|------|
 | v1.1 | MACD 辅助确认（金叉 + DIF > 0 才买）+ ETF 增量初始化 | ✅ |
 | v1.2 | 回撤止盈（浮盈 10% 后回撤 3% 触发）+ 虚拟回测盈亏分析 | ✅ |
-| v2.0 | 多指标综合评分（布林带 / RSI / 成交量） | 规划中 |
+| v2.0 | 多指标综合评分（布林带 / RSI / 成交量 → 连续评分 -100~+100） | S1-S3 ✅ 开发中 |
+| v2.1 | LLM 基本面分析辅助 | 规划中 |
 | v3.0 | 回测框架 + 参数优化 | 规划中 |
