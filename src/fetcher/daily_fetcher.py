@@ -220,7 +220,7 @@ class DailyFetcher(BaseFetcher):
 
 if __name__ == "__main__":
     fetcher = DailyFetcher()
-    # df = fetcher.get_etf_daily_from_baostock("159227", "2026-04-26", "2026-04-28")
-    # df = fetcher.get_etf_metric_from_eastmoney("159227", "20260426", "20260428")
-    df = fetcher.fetch_daily("159227", "2026-04-01", "2026-04-28")
+    df = fetcher.get_etf_daily_from_baostock("515050", "2026-05-01", "2026-05-14")
+    # df = fetcher.get_etf_metric_from_eastmoney("513100", "20260513", "20260514")
+    # df = fetcher.fetch_daily("513100", "2026-05-12", "2026-05-14")
     print(df)

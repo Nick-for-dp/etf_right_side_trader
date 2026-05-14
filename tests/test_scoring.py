@@ -1,14 +1,11 @@
 """综合评分策略单元测试：纯 DataFrame in/out。"""
 
-import math
-
 import pandas as pd
-import pytest
 
 from src.strategy.multi_indicator_scoring import MultiIndicatorScoring
 
 
-DEFAULT_WEIGHTS = {"trend": 0.45, "macd": 0.30, "rsi": 0.15, "bb": 0.10}
+DEFAULT_WEIGHTS = {"trend": 0.35, "macd": 0.25, "rsi": 0.15, "bb": 0.25}
 DEFAULT_THRESHOLDS = {"buy": 30, "sell": -30}
 
 
@@ -85,8 +82,8 @@ class TestSignalDirection:
 
 
 class TestVolumeMultiplier:
-    def test_volume_amplifies(self):
-        """放量放大信号强度。"""
+    def test_volume_not_amplify(self):
+        """放量不放大信号强度（右侧交易不追量）。"""
         base_row = {
             "date": "2026-01-15", "close": 1.25, "ma20": 1.22, "ma60": 1.18,
             "dif": 0.008, "dea": 0.005,
@@ -98,7 +95,8 @@ class TestVolumeMultiplier:
 
         score_normal = abs(strategy.generate(df_normal).iloc[0]["signal_meta"]["score"])
         score_spike = abs(strategy.generate(df_spike).iloc[0]["signal_meta"]["score"])
-        assert score_spike > score_normal
+        # vol_ratio > 1.0 被 clamp 到 1.0，放量不放大分数
+        assert score_spike == score_normal
 
     def test_volume_dampens(self):
         """缩量压低信号强度。"""

@@ -7,7 +7,7 @@
 from datetime import date, timedelta
 
 from src.config import load_config
-from src.database import init_engine, dispose_engine, indicators_repo, signals_repo
+from src.database import init_engine, dispose_engine, indicators_repo, signals_repo, quote_repo
 from src.database.schema import Base
 from src.fetcher import DailyFetcher, DataManager
 from src.indicators import MASystem, MACD, Bollinger, VolumeIndicator, RSI
@@ -86,7 +86,14 @@ def init_system(symbol: str | None = None,
             logger.warning(f"信号: {etf.symbol} 无指标数据，跳过")
             continue
 
+        # 从 quote 表取收盘价 join 到指标 DataFrame（V2.0 策略需要 close 做归一化）
+        quotes = quote_repo.find_by_code_in_range(
+            etf.symbol, start_date, t_minus_1
+        )
+        close_map = {str(q.date): q.close for q in quotes}
+
         df = _indicators_to_dataframe(indicators)
+        df["close"] = df["date"].map(close_map)
         signal_df = strategy.generate(df)
 
         saved = 0

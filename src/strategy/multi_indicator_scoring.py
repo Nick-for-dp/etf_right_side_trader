@@ -25,12 +25,12 @@ class MultiIndicatorScoring(BaseStrategy):
 
     @staticmethod
     def _calc_s_trend(spread: pd.Series, position: pd.Series) -> pd.Series:
-        raw = spread * 25 + position * 15
+        raw = spread * 15 + position * 10
         return raw.clip(-1, 1)
 
     @staticmethod
     def _calc_s_macd(dif_norm: pd.Series, macd_hist_norm: pd.Series) -> pd.Series:
-        raw = dif_norm * 3 + macd_hist_norm * 1.5
+        raw = dif_norm * 60 + macd_hist_norm * 30
         return raw.clip(-1, 1)
 
     @staticmethod
@@ -107,15 +107,28 @@ class MultiIndicatorScoring(BaseStrategy):
                     + s_bb * self.weights["bb"]
                 )
 
-                # ── 第四步：成交量乘数调整，得到最终评分 [-100, 100] ──
-                vol_mult = code_df["vol_ratio"].clip(lower=0.75, upper=1.25) ** 0.3
-                vol_mult = vol_mult.clip(0.75, 1.25)
+                # ── 第四步：成交量乘数调整（只衰减不放大，右侧交易不追量）──
+                vol_mult = code_df["vol_ratio"].clip(lower=0.85, upper=1.0) ** 0.3
+                vol_mult = vol_mult.clip(0.85, 1.0)
                 score = raw_score * vol_mult * 100
 
-                # ── 第五步：评分阈值映射为 BUY / SELL / HOLD ──
+                # ── 第五步：评分阈值 + 子信号一致性双重条件映射为 BUY / SELL / HOLD ──
+                # 右侧交易核心原则：单一指标不构成入场理由，至少两个维度同时确认
                 signal = pd.Series("HOLD", index=code_df.index)
-                signal[score >= self.thresholds["buy"]] = "BUY"
-                signal[score <= self.thresholds["sell"]] = "SELL"
+
+                # BUY 条件：评分达标 + 至少 2 个子信号为正（避免 S_trend 独木难支）
+                score_pass_buy = score >= self.thresholds["buy"]
+                pos_count = (s_trend > 0).astype(int) + (s_macd > 0).astype(int) \
+                    + (s_rsi > 0).astype(int) + (s_bb > 0).astype(int)
+                consensus_buy = pos_count >= 2
+                signal[score_pass_buy & consensus_buy] = "BUY"
+
+                # SELL 条件：评分达标 + 至少 2 个子信号为负（对称原则，避免恐慌性离场）
+                score_pass_sell = score <= self.thresholds["sell"]
+                neg_count = (s_trend < 0).astype(int) + (s_macd < 0).astype(int) \
+                    + (s_rsi < 0).astype(int) + (s_bb < 0).astype(int)
+                consensus_sell = neg_count >= 2
+                signal[score_pass_sell & consensus_sell] = "SELL"
 
                 # ── 第六步：组装输出（signal_meta 存子信号分解值，便于调试和回测）──
                 for i in code_df.index:

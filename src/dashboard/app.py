@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import streamlit as st
 
 from src.config import load_config
-from src.database import init_engine, dispose_engine
+from src.database import init_engine
 from src.service import TradingCalendarService
 
 
@@ -39,6 +39,7 @@ def main():
         st.Page("positions.py", title="我的持仓", icon="💼"),
         st.Page("detail.py", title="ETF 详情", icon="🔍"),
         st.Page("pnl.py", title="盈亏分析", icon="💰"),
+        st.Page("comparison.py", title="策略对比", icon="⚖️"),
     ])
     pages.run()
 
