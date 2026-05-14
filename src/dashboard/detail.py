@@ -1,7 +1,8 @@
-"""ETF 详情：K 线图 + MA 线 + 信号标记。"""
+"""ETF 详情：K 线 + 布林带 + MA 均线 + 信号标记，副图 MACD / RSI / 成交量。"""
 
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -56,9 +57,22 @@ def run():
     } for q in quotes])
 
     ind_map = {str(i.date): i.data for i in indicators}
+    # MA 均线
     qdf["ma20"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("ma20"))
     qdf["ma60"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("ma60"))
+    # 布林带
+    qdf["bb_upper"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("bb_upper"))
+    qdf["bb_lower"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("bb_lower"))
+    # MACD
+    qdf["dif"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("dif"))
+    qdf["dea"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("dea"))
+    qdf["macd"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("macd"))
+    # RSI
+    qdf["rsi"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("rsi"))
+    # 成交量均线
+    qdf["vol_ma20"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("vol_ma20"))
 
+    # ── 信号标记 ──
     sig_map = {str(s.date): s for s in signals}
     buy_dates, buy_prices = [], []
     sell_dates, sell_prices = [], []
@@ -73,12 +87,14 @@ def run():
                 sell_dates.append(d)
                 sell_prices.append(row["high"] * 1.02)
 
+    # ── 四行子图：K线(50%) + 成交量(15%) + MACD(20%) + RSI(15%) ──
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.7, 0.3],
+        rows=4, cols=1, shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.50, 0.15, 0.20, 0.15],
     )
 
+    # ── Row 1: K 线 + 均线 + 布林带 + 信号 ──
     fig.add_trace(
         go.Candlestick(
             x=qdf["date"], open=qdf["open"], high=qdf["high"],
@@ -101,6 +117,22 @@ def run():
             row=1, col=1,
         )
 
+    # 布林带上下轨
+    if qdf["bb_upper"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["bb_upper"], mode="lines",
+                       line=dict(color="gray", width=1, dash="dash"),
+                       name="BB 上轨"),
+            row=1, col=1,
+        )
+    if qdf["bb_lower"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["bb_lower"], mode="lines",
+                       line=dict(color="gray", width=1, dash="dash"),
+                       name="BB 下轨"),
+            row=1, col=1,
+        )
+
     if buy_dates:
         fig.add_trace(
             go.Scatter(x=buy_dates, y=buy_prices, mode="markers",
@@ -116,6 +148,7 @@ def run():
             row=1, col=1,
         )
 
+    # ── Row 2: 成交量 + 20 日均量 ──
     colors = ["red" if qdf.loc[i, "close"] >= qdf.loc[i, "open"] else "green"
               for i in range(len(qdf))]
     fig.add_trace(
@@ -123,36 +156,93 @@ def run():
                name="成交量"),
         row=2, col=1,
     )
+    if qdf["vol_ma20"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["vol_ma20"], mode="lines",
+                       line=dict(color="orange", width=1.2), name="均量 MA20"),
+            row=2, col=1,
+        )
 
+    # ── Row 3: MACD ──
+    if qdf["dif"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["dif"], mode="lines",
+                       line=dict(color="orange", width=1.2), name="DIF"),
+            row=3, col=1,
+        )
+    if qdf["dea"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["dea"], mode="lines",
+                       line=dict(color="blue", width=1.2), name="DEA"),
+            row=3, col=1,
+        )
+    if qdf["macd"].notna().any():
+        macd_colors = [
+            "red" if pd.notna(v) and v >= 0 else "green"
+            for v in qdf["macd"]
+        ]
+        fig.add_trace(
+            go.Bar(x=qdf["date"], y=qdf["macd"], marker_color=macd_colors,
+                   name="MACD 柱"),
+            row=3, col=1,
+        )
+
+    # ── Row 4: RSI ──
+    if qdf["rsi"].notna().any():
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["rsi"], mode="lines",
+                       line=dict(color="purple", width=1.5), name="RSI"),
+            row=4, col=1,
+        )
+    # RSI 参考线：70 超买 / 50 中性 / 30 超卖
+    for level, color, label in [(70, "red", "超买 70"), (50, "gray", "中性 50"), (30, "green", "超卖 30")]:
+        fig.add_hline(y=level, line=dict(color=color, width=0.5, dash="dot"),
+                      row=4, col=1, annotation_text=label,
+                      annotation_position="right")
+
+    # ── 全局布局 ──
     fig.update_layout(
         xaxis_rangeslider_visible=False,
-        height=600,
+        height=900,
         margin=dict(l=0, r=0, t=20, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     fig.update_yaxes(title_text="价格", row=1, col=1)
-    fig.update_yaxes(title_text="成交量（手）", row=2, col=1)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
+    fig.update_yaxes(title_text="MACD", row=3, col=1)
+    fig.update_yaxes(title_text="RSI", row=4, col=1, range=[0, 100])
 
     st.plotly_chart(fig, width="stretch")
 
+    # ── 底部指标卡片 ──
     st.divider()
     latest = qdf.iloc[-1]
     latest_ind = ind_map.get(latest["date"], {})
     latest_sig = sig_map.get(latest["date"])
 
-    cols = st.columns(6)
+    cols = st.columns(8)
     cols[0].metric("最新收盘", f"{latest['close']:.4f}")
     cols[1].metric("MA20",
                    f"{latest_ind.get('ma20', '-'):.4f}" if latest_ind.get("ma20") else "-")
     cols[2].metric("MA60",
                    f"{latest_ind.get('ma60', '-'):.4f}" if latest_ind.get("ma60") else "-")
-    cols[3].metric("区间最高", f"{qdf['high'].max():.4f}")
-    cols[4].metric("区间最低", f"{qdf['low'].min():.4f}")
+    cols[3].metric("RSI",
+                   f"{latest_ind.get('rsi', '-'):.1f}" if latest_ind.get("rsi") else "-")
+    cols[4].metric("量比",
+                   f"{latest_ind.get('vol_ratio', '-'):.2f}" if latest_ind.get("vol_ratio") else "-")
+    cols[5].metric("区间最高", f"{qdf['high'].max():.4f}")
+    cols[6].metric("区间最低", f"{qdf['low'].min():.4f}")
 
+    # 信号卡片：V2.0 展示评分，V1.x 展示信号字符串
     if latest_sig:
-        sig_label = latest_sig.signal
-        trend = latest_sig.signal_meta.get("trend", "") if latest_sig.signal_meta else ""
-        cols[5].metric("最新信号", f"{sig_label} ({trend})" if trend else sig_label)
+        meta = latest_sig.signal_meta or {}
+        score = meta.get("score")
+        if score is not None:
+            sig_display = f"{latest_sig.signal} ({score:+.1f})"
+        else:
+            trend = meta.get("trend", "")
+            sig_display = f"{latest_sig.signal} ({trend})" if trend else latest_sig.signal
+        cols[7].metric("最新信号", sig_display)
 
 
 if __name__ == "__main__":

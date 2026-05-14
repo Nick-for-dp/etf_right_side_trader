@@ -18,6 +18,23 @@ class MaCrossMacdStrategy(BaseStrategy):
         self.version = "1.1"
 
     def generate(self, df: pd.DataFrame) -> pd.DataFrame:
+        """基于 MA 金叉/死叉 + MACD DIF 确认生成交易信号。
+
+        BUY 侧加入 DIF > 0 条件，过滤无动能假突破；
+        SELL 侧不依赖 MACD，跟随趋势反转信号。
+
+        Args:
+            df: 含 ma{short}、ma{long}、dif 列的指标 DataFrame
+
+        Returns:
+            DataFrame，columns = [code, date, signal, strategy_version, signal_meta]，
+            signal 可选值为 BUY / SELL / HOLD
+
+        Example:
+            >>> strategy = MaCrossMacdStrategy(20, 60)
+            >>> signals = strategy.generate(indicator_df)
+            >>> signals[signals["signal"] != "HOLD"].head()
+        """
         df = df.sort_values(["code", "date"]).reset_index(drop=True)
 
         results = []

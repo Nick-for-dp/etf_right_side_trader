@@ -17,10 +17,12 @@ class Bollinger(BaseIndicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.DataFrame:
         close = df["close"]
+        # 中轨 = MA20，上下轨 = 中轨 ± 2σ
         mid = close.rolling(window=self.window).mean()
         std = close.rolling(window=self.window).std(ddof=1)
         upper = mid + self.num_std * std
         lower = mid - self.num_std * std
+        # 带宽 = (上轨-下轨)/中轨，值越小布林带越窄（挤压形态）
         width = (upper - lower) / mid
 
         result = df[["date"]].copy()

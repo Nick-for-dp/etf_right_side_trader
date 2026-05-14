@@ -36,4 +36,11 @@ def create_strategy(config: AppConfig) -> BaseStrategy:
             ma_long=params.get("ma_long", 60),
         )
 
+    if stype == "multi_indicator_scoring":
+        from src.strategy.multi_indicator_scoring import MultiIndicatorScoring
+        return MultiIndicatorScoring(
+            weights=params["weights"],
+            thresholds=params["thresholds"],
+        )
+
     raise ValueError(f"Unsupported strategy type: {stype}")

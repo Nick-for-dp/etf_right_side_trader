@@ -54,8 +54,18 @@ def run():
         ind_data = ind_list[-1].data if ind_list else {}
         ma20 = ind_data.get("ma20")
         ma60 = ind_data.get("ma60")
+        rsi = ind_data.get("rsi")
 
-        trend = sig.signal_meta.get("trend", "") if sig.signal_meta else ""
+        meta = sig.signal_meta or {}
+        trend = meta.get("trend", "")
+        score = meta.get("score")
+        # V2.0 展示评分，V1.x 展示趋势
+        if score is not None:
+            signal_display = f"{sig.signal} ({score:+.1f})"
+        elif trend:
+            signal_display = f"{sig.signal} ({trend})"
+        else:
+            signal_display = sig.signal
 
         adv_list = advice_repo.find_by_date(t)
         advice = ""
@@ -72,8 +82,8 @@ def run():
             "NAV": f"{nav}" if nav else "-",
             "MA20": f"{ma20:.4f}" if ma20 else "-",
             "MA60": f"{ma60:.4f}" if ma60 else "-",
-            "趋势": trend,
-            "信号": sig.signal,
+            "RSI": f"{rsi:.1f}" if rsi else "-",
+            "信号": signal_display,
             "建议": advice,
         })
 
@@ -84,9 +94,9 @@ def run():
     df = pd.DataFrame(rows)
 
     def _highlight_signal(val):
-        if val == "BUY":
+        if val.startswith("BUY"):
             return "background-color: #d4edda; color: #155724"
-        elif val == "SELL":
+        elif val.startswith("SELL"):
             return "background-color: #f8d7da; color: #721c24"
         return ""
 

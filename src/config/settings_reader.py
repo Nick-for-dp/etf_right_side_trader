@@ -9,7 +9,7 @@ import yaml
 from dotenv import load_dotenv
 
 
-_VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd"}
+_VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd", "multi_indicator_scoring"}
 _VALID_DB_DRIVERS = {"postgresql", "mysql"}
 
 
@@ -79,6 +79,29 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
         if not (isinstance(ms, int) and isinstance(ml, int) and 0 < ms < ml):
             raise ValueError(f"{stype} 需 0 < ma_short < ma_long，实际: {ms}, {ml}")
         params = {"ma_short": ms, "ma_long": ml}
+    if stype == "multi_indicator_scoring":
+        weights = params.get("weights", {})
+        required_keys = ("trend", "macd", "rsi", "bb")
+        for k in required_keys:
+            w = weights.get(k)
+            if not isinstance(w, (int, float)) or w <= 0:
+                raise ValueError(f"strategy.params.weights.{k} 需 > 0，实际: {w}")
+        total = sum(weights[k] for k in required_keys)
+        if not (0.99 <= total <= 1.01):
+            raise ValueError(f"weights 四项之和需 ≈ 1.0，实际: {total}")
+        thresholds = params.get("thresholds", {})
+        buy = thresholds.get("buy")
+        sell = thresholds.get("sell")
+        if not isinstance(buy, (int, float)) or buy <= 0:
+            raise ValueError(f"strategy.params.thresholds.buy 需 > 0，实际: {buy}")
+        if not isinstance(sell, (int, float)) or sell >= 0:
+            raise ValueError(f"strategy.params.thresholds.sell 需 < 0，实际: {sell}")
+        params = {
+            "ma_short": params.get("ma_short", 20),
+            "ma_long": params.get("ma_long", 60),
+            "weights": {k: weights[k] for k in required_keys},
+            "thresholds": {"buy": buy, "sell": sell},
+        }
     return stype, params
 
 

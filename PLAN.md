@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — 设计文档
 
-> v1.0 MVP 已完成（2026-04-29），v1.1 已完成（2026-05-06），v1.2 已完成（2026-05-08），本文档聚焦架构设计 + 后续规划。
+> v1.0 MVP 已完成（2026-04-29），v1.1 已完成（2026-05-06），v1.2 已完成（2026-05-08），v2.0 已完成（2026-05-14），本文档聚焦架构设计 + 后续规划。
 
 ---
 
@@ -90,7 +90,7 @@ config/（YAML + .env）
 
 #### Phase 2：综合评分策略（S4）
 
-| **S4** | `strategy/multi_indicator_scoring.py` | 依赖 S1-S3 |
+| **S4** | `strategy/multi_indicator_scoring.py` | ✅ 已完成（2026-05-13） |
 
 策略输出 -100~+100 连续评分。评分公式：
 
@@ -160,18 +160,21 @@ score ≤ −30  → SELL  (清仓)
 
 ±30 阈值意味着需要至少两个子信号同时指向同一方向才能触发操作。advisor 层从查 `signal` 字段改为读 `score` 数值做阈值映射。
 
-#### Phase 3：集成与验证（S5-S7，可并行）
+#### Phase 3：集成与验证（S5-S7）
 
-| **S5** | 指标增量回填 | `IndicatorService` 注册新指标，`init --symbol` 增量回填历史数据 |
-| **S6** | Dashboard 更新 | 详情页新增布林带/RSI/成交量副图，信号展示改为评分曲线 |
-| **S7** | 回测对比 | 用 `profit_analysis_service` 跑 V1.2 vs V2.0 同期对比，验证升级效果 |
+| 步骤 | 模块 | 说明 | 状态 |
+|------|------|------|------|
+| **S5** | 指标增量回填 | `IndicatorService` 注册新指标，`init --symbol` 增量回填历史数据 | ✅ |
+| **S6** | Dashboard 更新 | 详情页新增布林带/RSI/成交量副图，信号展示改为评分曲线 | ✅ |
+| **S7** | 回测对比 | 用 `profit_analysis_service` 跑 V1.2 vs V2.0 同期对比，验证升级效果 | 待实施 |
 
 #### 关键设计决策（已定）
 
 1. 不做趋势状态机——连续函数直接算分，不经过离散分类
 2. 权重和评分阈值通过 `settings.yaml` 可配置，S4 实施时新增配置项
 3. V2.0 策略通过 `strategy.factory` 新增 `"multi_indicator_scoring"` 类型，与 V1.x 共存
-4. 信号表 `signal` 字段存储 score 数值，`signal_meta` JSONB 存储四个子信号分解值，便于调试和回测
+4. 信号表 `signal` 字段存储 BUY/SELL/HOLD（策略内部做 ±30 阈值映射），`signal_meta` JSONB 存储四个子信号分解值 + 评分，下游 advisor 无需改动
+5. `settings.yaml` 策略类型已切换为 `"multi_indicator_scoring"`，2026-05-14 正式投产
 
 ### v2.1 — 待办
 

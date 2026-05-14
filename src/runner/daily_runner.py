@@ -98,7 +98,15 @@ def _step3_generate_signals(config: AppConfig, t_minus_1: date) -> None:
             logger.warning(f"STEP3: {etf.symbol} 无指标数据，跳过")
             continue
 
+        # 从 quote 表取收盘价，join 到指标 DataFrame（V2.0 策略需要 close 做归一化）
+        quotes = quote_repo.find_by_code_in_range(
+            etf.symbol, fetch_start, t_minus_1
+        )
+        close_map = {str(q.date): q.close for q in quotes}
+
         df = _indicators_to_dataframe(indicators)
+        df["close"] = df["date"].map(close_map)
+
         signal_df = strategy.generate(df)
 
         target_str = str(t_minus_1)
