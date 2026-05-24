@@ -16,7 +16,7 @@ from src.database import (
     indicators_repo, signals_repo, positions_repo, advice_repo, quote_repo,
 )
 from src.fetcher import DailyFetcher, DataManager
-from src.indicators import MASystem, MACD, Bollinger, RSI, VolumeIndicator
+from src.indicators import MASystem, MACD, Bollinger, RSI, VolumeIndicator, LongTermOdds
 from src.models import OperationAdvice
 from src.risk import RiskController
 from src.service import TradingCalendarService, IndicatorService, PositionService, QuoteService
@@ -78,6 +78,8 @@ def _step2_calc_indicators(config: AppConfig, t_minus_1: date) -> None:
     service.register(Bollinger(window=20, num_std=2.0))
     service.register(RSI(period=14))
     service.register(VolumeIndicator(window=20))
+    # v2.1A：长期赔率因子，用于 advisor 开仓门控
+    service.register(LongTermOdds())
     for etf in config.etf_list:
         n = service.calculate_and_save(etf.symbol, t_minus_1, t_minus_1)
         logger.info(f"STEP2: {etf.symbol} 写入 {n} 条指标")
@@ -209,13 +211,28 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         return
 
     current_prices: dict[str, float] = {}
+    # v2.1A：从 indicators 表提取 T-1 赔率数据，组装 odds_map 传入 advisor
+    odds_map: dict[str, dict] = {}
     for etf in config.etf_list:
         latest = quote_repo.find_latest_quote(etf.symbol)
         if latest is not None:
             current_prices[etf.symbol] = latest.close
+        # 读取 T-1 日指标（含 odds 字段）
+        ind_list = indicators_repo.find_by_code_between(etf.symbol, t_minus_1, t_minus_1)
+        if ind_list:
+            data = ind_list[0].data
+            odds_map[etf.symbol] = {
+                "odds_state": data.get("odds_state"),
+                "odds_score": data.get("odds_score"),
+                "premium_blocked": data.get("odds_premium_blocked", False),
+            }
 
     advices = generate_advice(
-        pos_list, pd.DataFrame(signal_rows), current_prices, risk_signals
+        pos_list, 
+        pd.DataFrame(signal_rows), 
+        current_prices, 
+        risk_signals,
+        odds_map=odds_map,
     )
     records = [OperationAdvice(**a) for a in advices]
     advice_repo.save_batch(records)

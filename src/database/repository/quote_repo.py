@@ -57,6 +57,28 @@ def find_by_code_in_range(code: str, start: date | None = None,
         session.close()
 
 
+def find_earliest_date(code: str) -> date | None:
+    """查询某 ETF 最早的行情日期。
+
+    Args:
+        code: ETF 代码
+
+    Returns:
+        最早行情日期，无数据时返回 None
+    """
+    session = get_session()
+    try:
+        result = (
+            session.query(QuoteOrm.date)
+            .filter(QuoteOrm.code == code)
+            .order_by(QuoteOrm.date.asc())
+            .first()
+        )
+        return result[0] if result else None
+    finally:
+        session.close()
+
+
 def find_latest_date(code: str) -> date | None:
     """查询某 ETF 最新的行情日期。
 

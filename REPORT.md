@@ -1,6 +1,6 @@
 # ETF 右侧交易助手 — MVP 技术报告
 
-> 版本 v2.0 已完成 | 2026-05-14
+> 版本 v2.1A 已完成 | 2026-05-24
 
 ---
 
@@ -113,12 +113,41 @@ for rule in risk_rules:
 
 ## 5. 数据采集
 
-双数据源合并方案：
+三数据源分层方案：
+
+```
+Tushare fund_daily + fund_adj       ← 全量历史 OHLCV（手动前复权）
+BaoStock query_history_k_data_plus  ← 日常增量 OHLCV（自动前复权）
+AKShare/EastMoney                   ← NAV 净值 + 溢价率
+```
 
 | 数据项 | 来源 | 说明 |
 |--------|------|------|
-| OHLCV | BaoStock | 日线行情，免费但需登录 |
-| NAV（净值） | AKShare / EastMoney | 用于计算溢价率 |
+| OHLCV（历史回填） | Tushare `fund_daily` + `fund_adj` | 不复权原始数据 + 复权因子 → 手动前复权，覆盖 ETF 上市以来全量历史 |
+| OHLCV（日常增量） | BaoStock | 日线行情，自动前复权，覆盖近 ~6 个月 |
+| NAV（净值） | AKShare / EastMoney | 用于计算溢价率，Tushare 不提供此字段 |
+
+### Tushare 历史回填链路（v2.1-prep，2026-05-23）
+
+`HistoryFetcher` 封装 Tushare 数据拉取，核心流程：
+
+```
+fund_daily（不复权 OHLCV） + fund_adj（复权因子）
+    → left merge + ffill 补齐缺失因子
+    → 前复权 = 原始价格 × 当日因子 / 最新因子
+    → 单位转换：amount 千元→元
+    → 写入 quote 表（ON CONFLICT DO NOTHING，已有 NAV 不覆盖）
+```
+
+CLI 命令：`python main.py backfill-tushare [--symbol X] [--start YYYYMMDD]`
+
+### 前复权验证：515050 通信ETF华夏 拆分
+
+2026-05-13 发生 3:1 拆分（量扩大三倍，价格变为 1/3）。Tushare `fund_adj` 正确记录：
+- 上市 ~ 2026-05-12：`adj_factor = 1.0`
+- 2026-05-13 起：`adj_factor = 3.0`
+
+全量 5 年交叉验证（2019-10 ~ 2026-05，5 个时间点）：diff=0.0000，价格序列连续无断崖。
 
 溢价率公式：`(close - nav) / nav × 100%`。NAV 空值/异常值（空字符串、NaN）已做防御处理，入库前转为 None。
 
@@ -209,6 +238,54 @@ python main.py dashboard                         # 启动 Streamlit 仪表盘（
 
 **S7 回测对比 ✅（2026-05-14 完成）**：`BacktestComparison` 引擎 + `comparison.py` 策略对比页面。同数据源运行 V1.2 vs V2.0，对比交易次数/胜率/累计收益/最大回撤，资金曲线叠加图 + 按 ETF 明细表 + 已平仓交易散点图。
 
+### 10.4 Tushare 历史行情回填（v2.1-prep ✅，2026-05-23）
+
+新增 `fetcher/history_fetcher.py` — Tushare `fund_daily` + `fund_adj` 手动前复权链路，作为 BaoStock+AKShare 的历史数据补充：
+
+- `HistoryFetcher.get_etf_history_from_tushare()` — 调 Tushare API，拉取不复权日线 + 复权因子，手动计算前复权，单位转换（amount 千元→元，vol 手保持不变），输出列对齐 `Quote` 模型
+- `DataManager.backfill_tushare()` — 全量/单只 ETF 一键回填，`ON CONFLICT DO NOTHING` 保护已有 NAV 不被覆盖
+- CLI 命令：`python main.py backfill-tushare [--symbol X] [--start YYYYMMDD] [--end YYYYMMDD]`
+- 515050 拆分验证：2026-05-13 3:1 拆分，`adj_factor` 1.0→3.0，全量 5 年交叉验证 diff=0.0000，价格连续
+
+前复权公式：`前复权价格 = 原始价格 × 当日复权因子 / 最新复权因子`
+
+### 10.5 长期赔率因子 + 开仓门控（v2.1A ✅，2026-05-24）
+
+V2.1A 在 v2.0 多指标评分基础上新增**长期赔率门控**，基于 ETF 自身 3 年历史价格行为评估入场赔率，过滤追高交易。
+
+**核心链路**：
+
+```
+LongTermOdds 指标（5 子因子加权）→ indicators.data JSONB
+    → daily_runner STEP 5 提取 odds_state/score/premium_blocked
+    → generate_advice(odds_map=...) 拦截 EXPENSIVE/高溢价时的建仓和加仓
+```
+
+**新增/修改文件**：
+
+| 文件 | 变更 |
+|------|------|
+| `src/indicators/long_term_odds.py` | 新增：价格分位/回撤/Z-score/持有胜率/风险惩罚 5 因子加权，输出 CHEAP/FAIR/EXPENSIVE 三态 |
+| `src/advisor/operation_advisor.py` | 修改：新增 `odds_map` 参数，EXPENSIVE/高溢价 → 建仓→观望、加仓→继续持有 |
+| `src/service/indicator_service.py` | 修改：`_LOOKBACK_PADDING` 120→1500，price_df 新增 nav/premium_rate 列 |
+| `src/runner/daily_runner.py` | 修改：STEP2 注册 LongTermOdds，STEP5 提取赔率数据传入 advisor |
+| `src/dashboard/detail.py` | 修改：新增赔率评分/状态卡片 + odds_score 历史曲线副图（含三色背景带） |
+| `src/backtest/odds_gate_backtest.py` | 新增：v2.0 vs v2.1A 同信号双 advisor 回测对比引擎 |
+| `main.py` | 修改：新增 `backtest-odds` CLI 命令 |
+| `src/fetcher/data_manager.py` | 修改：关闭 backfill() 东方财富向前补逻辑，Tushare 已覆盖全量历史 |
+
+**588000 回测验证**（2024-01-02 ~ 2026-05-23）：
+
+| 指标 | V2.0 (无门控) | V2.1A (有门控) |
+|------|-------------|-------------|
+| 已平仓交易 | 5 笔 | 4 笔 |
+| 胜率 | 0% | 25% |
+| 累计盈亏 | -30.8% | **+2.1%** |
+| 最大回撤 | -30.7% | -23.6% |
+| 买入拦截 | — | 117 次 |
+
+赔率门控将 v2.0 追高导致的 -30.8% 累计亏损扭转为 +2.1% 正收益。
+
 ---
 
 ## 11. 文件清单
@@ -234,7 +311,7 @@ etf_right_side_trader/
 │   │   ├── connection.py           # engine 单例 + scoped_session
 │   │   ├── schema/                 # SQLAlchemy ORM（含 to_model / to_orm）
 │   │   └── repository/             # 纯数据访问（一张表一个文件）
-│   ├── fetcher/                    # 数据采集（BaoStock + AKShare）
+│   ├── fetcher/                    # 数据采集（BaoStock + AKShare + Tushare）
 │   ├── indicators/                 # 技术指标：MA / MACD / 布林带 / RSI / 成交量（DataFrame in/out）
 │   ├── strategy/                   # 策略信号（工厂模式，ma_cross / ma_cross_macd）
 │   ├── risk/                       # 风控规则链（插件模式）

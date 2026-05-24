@@ -11,7 +11,8 @@ from src.utils import get_logger
 logger = get_logger(__name__)
 
 # 安全冗余窗口：拉取行情时往前多取的天数，保证 rolling 计算有足够历史
-_LOOKBACK_PADDING = 120
+# v2.1A 升级：LongTermOdds 需要 L+H ≈ 1008 交易日 ≈ 4 年，改为 1500 日历天
+_LOOKBACK_PADDING = 1500
 
 
 class IndicatorService:
@@ -60,6 +61,7 @@ class IndicatorService:
             return 0
 
         # 转 DataFrame，按 date 升序
+        # v2.1A：新增 nav 和 premium_rate，供 LongTermOdds 使用
         price_df = pd.DataFrame(
             [{
                 "date": str(q.date),
@@ -68,6 +70,8 @@ class IndicatorService:
                 "low": q.low,
                 "close": q.close,
                 "volume": q.volume,
+                "nav": q.nav,
+                "premium_rate": q.premium_rate,
             } for q in quotes]
         ).sort_values("date").reset_index(drop=True)
 

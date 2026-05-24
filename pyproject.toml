@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.10",
     "exchange-calendars>=4.13.2",
     "baostock>=0.9.1",
+    "tushare>=1.4.29",
 ]
 
 [[tool.uv.index]]

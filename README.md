@@ -1,6 +1,6 @@
 # ETF 右侧交易助手
 
-> 多指标综合评分的 ETF 趋势跟踪系统，v2.0 已完成（2026-05-14）。
+> 多指标综合评分的 ETF 趋势跟踪系统，v2.1A 已完成（2026-05-24）。
 
 ## 交易策略
 
@@ -86,9 +86,10 @@ uv run python main.py init
 uv run python main.py init --symbol 588000 --start 2024-01-01
 
 # 5. 日常使用
-uv run python main.py run          # 手动执行一次
-uv run python main.py schedule     # 启动每日 07:00 定时调度
-uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
+uv run python main.py run              # 手动执行一次
+uv run python main.py schedule         # 启动每日 07:00 定时调度
+uv run python main.py dashboard        # 启动仪表盘 → http://localhost:8501
+uv run python main.py backtest-odds    # V2.0 vs V2.1A 赔率门控回测对比
 ```
 
 ## 仪表盘
@@ -134,5 +135,6 @@ uv run python main.py dashboard    # 启动仪表盘 → http://localhost:8501
 | v1.1 | MACD 辅助确认（金叉 + DIF > 0 才买）+ ETF 增量初始化 | ✅ |
 | v1.2 | 回撤止盈（浮盈 10% 后回撤 3% 触发）+ 虚拟回测盈亏分析 | ✅ |
 | v2.0 | 多指标综合评分（趋势/动能/RSI/布林带 → 连续评分 -100~+100） + 策略对比回测 | ✅ 已完成（2026-05-14） |
-| v2.1 | LLM 基本面分析辅助 | 规划中 |
-| v3.0 | 回测框架 + 参数优化 | 规划中 |
+| v2.1A | 长期赔率因子 + 开仓门控（5 子因子加权 → CHEAP/FAIR/EXPENSIVE） | ✅ 已完成（2026-05-24） |
+| v2.1B | 轻量持有体验辅助（`fund_individual_profit_probability_xq`） | 规划中 |
+| v3.0 | PE/PB 估值分位 + 回测框架参数优化 | 规划中 |

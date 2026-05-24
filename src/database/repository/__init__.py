@@ -3,6 +3,7 @@ from . import indicators_repo
 from . import positions_repo
 from . import signals_repo
 from . import advice_repo
+from . import index_valuation_repo
 
 __all__ = [
     "quote_repo",
@@ -10,4 +11,5 @@ __all__ = [
     "positions_repo",
     "signals_repo",
     "advice_repo",
+    "index_valuation_repo",
 ]

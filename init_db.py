@@ -10,7 +10,7 @@ from src.config import load_config
 from src.database import init_engine, dispose_engine, indicators_repo, signals_repo, quote_repo
 from src.database.schema import Base
 from src.fetcher import DailyFetcher, DataManager
-from src.indicators import MASystem, MACD, Bollinger, VolumeIndicator, RSI
+from src.indicators import MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
 from src.runner.daily_runner import _indicators_to_dataframe
 from src.service import TradingCalendarService, IndicatorService
 from src.strategy import create_strategy
@@ -71,6 +71,8 @@ def init_system(symbol: str | None = None,
     service.register(Bollinger(window=20, num_std=2.0))
     service.register(VolumeIndicator(window=20))
     service.register(RSI(period=14))
+    # v2.1A：长期赔率因子
+    service.register(LongTermOdds())
     for etf in targets:
         n = service.calculate_and_save(etf.symbol, start_date, t_minus_1)
         logger.info(f"指标: {etf.symbol} 写入 {n} 条")

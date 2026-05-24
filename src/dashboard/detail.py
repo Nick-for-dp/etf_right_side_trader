@@ -1,4 +1,4 @@
-"""ETF 详情：K 线 + 布林带 + MA 均线 + 信号标记，副图 MACD / RSI / 成交量。"""
+"""ETF 详情：K 线 + 布林带 + MA 均线 + 信号标记，副图 MACD / RSI / 成交量 / 赔率评分。"""
 
 from datetime import date, timedelta
 
@@ -71,6 +71,10 @@ def run():
     qdf["rsi"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("rsi"))
     # 成交量均线
     qdf["vol_ma20"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("vol_ma20"))
+    # v2.1A：长期赔率因子
+    qdf["odds_score"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("odds_score"))
+    qdf["odds_state"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("odds_state"))
+    qdf["odds_premium_blocked"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("odds_premium_blocked", False))
 
     # ── 信号标记 ──
     sig_map = {str(s.date): s for s in signals}
@@ -87,11 +91,11 @@ def run():
                 sell_dates.append(d)
                 sell_prices.append(row["high"] * 1.02)
 
-    # ── 四行子图：K线(50%) + 成交量(15%) + MACD(20%) + RSI(15%) ──
+    # ── 五行子图：K线(40%) + 成交量(12%) + MACD(18%) + RSI(15%) + 赔率(15%) ──
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
+        rows=5, cols=1, shared_xaxes=True,
         vertical_spacing=0.02,
-        row_heights=[0.50, 0.15, 0.20, 0.15],
+        row_heights=[0.40, 0.12, 0.18, 0.15, 0.15],
     )
 
     # ── Row 1: K 线 + 均线 + 布林带 + 信号 ──
@@ -200,10 +204,32 @@ def run():
                       row=4, col=1, annotation_text=label,
                       annotation_position="right")
 
+    # ── Row 5: 长期赔率评分 + 三色背景带 ──
+    if qdf["odds_score"].notna().any():
+        # 三色背景带：CHEAP(≥30) 绿色 / FAIR(-30~30) 留白 / EXPENSIVE(≤-30) 红色
+        fig.add_hrect(y0=30, y1=100, fillcolor="rgba(0,180,0,0.08)",
+                      line_width=0, row=5, col=1)
+        fig.add_hrect(y0=-100, y1=-30, fillcolor="rgba(220,0,0,0.08)",
+                      line_width=0, row=5, col=1)
+        # 阈值参考线
+        fig.add_hline(y=30, line=dict(color="green", width=0.6, dash="dot"),
+                      row=5, col=1, annotation_text="CHEAP +30",
+                      annotation_position="top right")
+        fig.add_hline(y=-30, line=dict(color="red", width=0.6, dash="dot"),
+                      row=5, col=1, annotation_text="EXPENSIVE -30",
+                      annotation_position="bottom right")
+        fig.add_hline(y=0, line=dict(color="gray", width=0.4, dash="dot"),
+                      row=5, col=1)
+        fig.add_trace(
+            go.Scatter(x=qdf["date"], y=qdf["odds_score"], mode="lines",
+                       line=dict(color="#1f77b4", width=1.5), name="赔率评分"),
+            row=5, col=1,
+        )
+
     # ── 全局布局 ──
     fig.update_layout(
         xaxis_rangeslider_visible=False,
-        height=900,
+        height=1000,
         margin=dict(l=0, r=0, t=20, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
@@ -211,6 +237,7 @@ def run():
     fig.update_yaxes(title_text="成交量", row=2, col=1)
     fig.update_yaxes(title_text="MACD", row=3, col=1)
     fig.update_yaxes(title_text="RSI", row=4, col=1, range=[0, 100])
+    fig.update_yaxes(title_text="赔率评分", row=5, col=1, range=[-100, 100])
 
     st.plotly_chart(fig, width="stretch")
 
@@ -220,7 +247,7 @@ def run():
     latest_ind = ind_map.get(latest["date"], {})
     latest_sig = sig_map.get(latest["date"])
 
-    cols = st.columns(8)
+    cols = st.columns(10)
     cols[0].metric("最新收盘", f"{latest['close']:.4f}")
     cols[1].metric("MA20",
                    f"{latest_ind.get('ma20', '-'):.4f}" if latest_ind.get("ma20") else "-")
@@ -233,6 +260,33 @@ def run():
     cols[5].metric("区间最高", f"{qdf['high'].max():.4f}")
     cols[6].metric("区间最低", f"{qdf['low'].min():.4f}")
 
+    # ── v2.1A：赔率指标卡片 ──
+    odds_score_val = latest_ind.get("odds_score")
+    odds_state_val = latest_ind.get("odds_state")
+    odds_blocked = latest_ind.get("odds_premium_blocked", False)
+
+    if odds_score_val is not None:
+        cols[7].metric("赔率评分", f"{odds_score_val:+.1f}")
+    else:
+        cols[7].metric("赔率评分", "-")
+
+    if odds_state_val:
+        state_color = {
+            "CHEAP": "green",
+            "FAIR": "gray",
+            "EXPENSIVE": "red",
+            "INSUFFICIENT": "orange",
+        }.get(odds_state_val, "gray")
+        cols[8].markdown(
+            f"**赔率状态**<br><span style='color:{state_color};font-size:1.2em;font-weight:bold'>{odds_state_val}</span>",
+            unsafe_allow_html=True,
+        )
+        # 溢价拦截警告
+        if odds_blocked:
+            st.warning(f"⚠ 溢价率过高，新开仓/加仓已被拦截")
+    else:
+        cols[8].metric("赔率状态", "-")
+
     # 信号卡片：V2.0 展示评分，V1.x 展示信号字符串
     if latest_sig:
         meta = latest_sig.signal_meta or {}
@@ -242,7 +296,7 @@ def run():
         else:
             trend = meta.get("trend", "")
             sig_display = f"{latest_sig.signal} ({trend})" if trend else latest_sig.signal
-        cols[7].metric("最新信号", sig_display)
+        cols[9].metric("最新信号", sig_display)
 
 
 if __name__ == "__main__":

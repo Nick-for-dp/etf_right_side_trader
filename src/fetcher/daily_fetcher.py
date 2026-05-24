@@ -12,7 +12,12 @@ logger = get_logger(__name__)
 
 
 class DailyFetcher(BaseFetcher):
-    """通过 BaoStock与AKShare 拉取 ETF 日线行情。"""
+    """通过 BaoStock（日常）与东方财富（历史回填）拉取 ETF 日线 OHLCV + NAV。
+
+    OHLCV（日常）: BaoStock — 稳定，近 6 个月数据
+    OHLCV（历史）: ak.fund_etf_hist_em — 东方财富，支持上市以来全量历史，反爬严格
+    NAV:          ak.fund_etf_fund_info_em — 东方财富，单位净值
+    """
 
     def __init__(self):
         super().__init__()
@@ -96,7 +101,9 @@ class DailyFetcher(BaseFetcher):
         end_date: str,
         fields: str = "date, code, open, high, low, close, volume, amount, turn, tradestatus"
     ) -> Optional[pd.DataFrame]:
-        """从 BaoStock 提供的接口获取指定 ETF 的指标数据。
+        """从 BaoStock 获取指定 ETF 的日线 OHLCV 数据（前复权）。
+
+        BaoStock 稳定可靠，适合日常增量同步，但仅覆盖近 ~6 个月数据。
 
         Args:
             symbol: ETF 代码
@@ -105,14 +112,8 @@ class DailyFetcher(BaseFetcher):
             fields: 指标字段，默认包含 OHLCV 等核心字段
 
         Returns:
-            包含 trade_date/symbol/open_px/high_px/low_px/close_px 等列的 DataFrame，
+            包含 trade_date/symbol/open_px/high_px/low_px/close_px/volume 等列的 DataFrame，
             无数据时返回 None
-
-        Example:
-            >>> fetcher = DailyFetcher()
-            >>> df = fetcher.get_etf_daily_from_baostock("159227", "2026-04-01", "2026-04-28")
-            >>> print("open_px" in df.columns)
-            True
         """
         lg = bs.login()
         if lg.error_code != self.GOOD_STATUS_CODE:
@@ -151,38 +152,111 @@ class DailyFetcher(BaseFetcher):
                 "trade_status": int(row_data[9])
             }
             data_list.append(data)
-        logger.info(f"成功获取{symbol} {start_date} 至 {end_date} 的日线数据，记录数为{len(data_list)}。")
+        logger.info(f"成功获取{symbol} {start_date} 至 {end_date} 的日线数据（BaoStock），"
+                    f"记录数为{len(data_list)}。")
         bs.logout()
         return pd.DataFrame(data_list)
 
-    def fetch_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    @rate_limit(min_interval=60.0, key="eastmoney_ohlcv")
+    @retry_on_error(max_retries=3, retry_delay=15.0)
+    def get_etf_daily_from_eastmoney(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+    ) -> Optional[pd.DataFrame]:
+        """从东方财富获取 ETF 日线 OHLCV 数据（前复权）。
+
+        作为 BaoStock 的历史数据补充，支持从 ETF 上市日起的全量历史数据，
+        满足长期赔率因子对 3 年以上窗口的需求。反爬机制严格，仅用于回填场景。
+
+        Args:
+            symbol: ETF 代码
+            start_date: 开始日期，格式 "YYYYMMDD"
+            end_date: 结束日期，格式 "YYYYMMDD"
+
+        Returns:
+            包含 trade_date/symbol/open_px/high_px/low_px/close_px/volume 等列的 DataFrame，
+            无数据时返回 None
+
+        Example:
+            >>> fetcher = DailyFetcher()
+            >>> df = fetcher.get_etf_daily_from_eastmoney("588000", "20201116", "20260514")
+            >>> print("open_px" in df.columns)
+            True
+        """
+        if not end_date:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        try:
+            raw_df = ak.fund_etf_hist_em(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
+
+            if raw_df.empty:
+                logger.warning(f"东方财富未返回 {symbol} 在 {start_date}~{end_date} 的数据")
+                return None
+
+            # 东方财富返回中文列名 → 英文列名
+            column_map = {
+                "open_px": "开盘",
+                "high_px": "最高",
+                "low_px": "最低",
+                "close_px": "收盘",
+                "volume": "成交量",
+                "amount": "成交额",
+                "turnover_rate": "换手率",
+            }
+            hist_list = self._build_hist_data_list(raw_df, symbol, column_map, date_field_name="日期")
+            logger.info(f"成功获取{symbol} {start_date} 至 {end_date} 的日线数据（东方财富），"
+                        f"记录数为{len(hist_list)}。")
+            return pd.DataFrame(hist_list)
+        # 网络异常向上传播，由 @retry_on_error 装饰器处理重试
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error(f"数据解析错误 symbol={symbol}，开始时间为{start_date}，"
+                         f"结束时间为{end_date}，错误信息：{e}。")
+            return None
+
+    def fetch_daily(self, symbol: str, start_date: str, end_date: str,
+                     skip_baostock: bool = False) -> pd.DataFrame:
         """拉取 OHLCV + NAV 并合并为统一格式。
 
-        BaoStock 提供日线行情（OHLCV），东方财富补充单位净值（NAV），
-        按 trade_date + symbol 做左连接，NAV 缺失时对应列为 None。
+        OHLCV 优先使用 BaoStock（稳定，适合日常增量），BaoStock 无数据时
+        回退到东方财富 fund_etf_hist_em（支持全量历史，但反爬严格）。
+        skip_baostock=True 时跳过 BaoStock，直接走东方财富（历史回填场景）。
+        NAV 始终来自东方财富 fund_etf_fund_info_em。
 
         Args:
             symbol: ETF 代码
             start_date: 开始日期（YYYY-MM-DD）
             end_date: 结束日期（YYYY-MM-DD）
+            skip_baostock: True 时跳过 BaoStock，直接使用东方财富
 
         Returns:
             列包含 code/date/open/high/low/close/volume/nav/premium_rate 的 DataFrame
-
-        Example:
-            >>> fetcher = DailyFetcher()
-            >>> df = fetcher.fetch_daily("159227", "2026-04-01", "2026-04-28")
-            >>> print(df.columns.tolist())
-            ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'nav', 'premium_rate']
         """
-        ohlcv_df = self.get_etf_daily_from_baostock(symbol, start_date, end_date)
-        if ohlcv_df is None or ohlcv_df.empty:
-            logger.warning(f"BaoStock 未返回 {symbol} 在 {start_date}~{end_date} 的数据")
-            return pd.DataFrame()
-
         # 东方财富日期格式为 YYYYMMDD
         start_fmt = start_date.replace("-", "")
         end_fmt = end_date.replace("-", "")
+
+        if skip_baostock:
+            ohlcv_df = self.get_etf_daily_from_eastmoney(symbol, start_fmt, end_fmt)
+        else:
+            # 日常增量优先走 BaoStock（稳定），无数据时回退东方财富（历史数据）
+            ohlcv_df = self.get_etf_daily_from_baostock(symbol, start_date, end_date)
+            if ohlcv_df is None or ohlcv_df.empty:
+                logger.info(f"BaoStock 无 {symbol} 在 {start_date}~{end_date} 的数据，"
+                            f"回退东方财富。")
+                ohlcv_df = self.get_etf_daily_from_eastmoney(symbol, start_fmt, end_fmt)
+
+        if ohlcv_df is None or ohlcv_df.empty:
+            logger.warning(f"{symbol} 在 {start_date}~{end_date} 无数据")
+            return pd.DataFrame()
+
         nav_df = self.get_etf_metric_from_eastmoney(symbol, start_fmt, end_fmt)
 
         if nav_df is not None and not nav_df.empty:
@@ -220,7 +294,9 @@ class DailyFetcher(BaseFetcher):
 
 if __name__ == "__main__":
     fetcher = DailyFetcher()
-    df = fetcher.get_etf_daily_from_baostock("515050", "2026-05-01", "2026-05-14")
-    # df = fetcher.get_etf_metric_from_eastmoney("513100", "20260513", "20260514")
-    # df = fetcher.fetch_daily("513100", "2026-05-12", "2026-05-14")
-    print(df)
+    # 测试 BaoStock（日常增量）
+    df = fetcher.get_etf_daily_from_baostock("588000", "2026-05-01", "2026-05-14")
+    print("BaoStock:", df.shape if df is not None else "None")
+    # 测试东方财富（历史回填）
+    df2 = fetcher.get_etf_daily_from_eastmoney("588000", "20201116", "20260514")
+    print("EastMoney:", df2.shape if df2 is not None else "None")
