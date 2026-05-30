@@ -23,6 +23,18 @@ class EtfItem:
 
 
 @dataclass
+class MarketIndexItem:
+    """市场指数配置项。"""
+
+    code: str
+    name: str = ""
+    baostock_code: str = ""
+    akshare_symbol: str = ""
+    source: str = "auto"
+    weight: float = 1.0
+
+
+@dataclass
 class AppConfig:
     """应用配置，聚合所有运行期参数。"""
 
@@ -31,9 +43,63 @@ class AppConfig:
     strategy_type: str
     strategy_params: dict = field(default_factory=dict)
     risk_rules: list[dict] = field(default_factory=list)
+    market_indices: list[MarketIndexItem] = field(default_factory=list)
+    market_regime_params: dict = field(default_factory=dict)
     lookback_days: int = 400
     scheduler_run_time: str = "07:00"
     scheduler_timezone: str = "Asia/Shanghai"
+
+
+_DEFAULT_MARKET_INDICES = [
+    {
+        "code": "000001",
+        "name": "上证指数",
+        "baostock_code": "sh.000001",
+        "akshare_symbol": "sh000001",
+        "source": "baostock",
+        "weight": 1.0,
+    },
+    {
+        "code": "000300",
+        "name": "沪深300",
+        "baostock_code": "sh.000300",
+        "akshare_symbol": "sh000300",
+        "source": "baostock",
+        "weight": 1.0,
+    },
+    {
+        "code": "000905",
+        "name": "中证500",
+        "baostock_code": "sh.000905",
+        "akshare_symbol": "sh000905",
+        "source": "baostock",
+        "weight": 1.0,
+    },
+    {
+        "code": "000852",
+        "name": "中证1000",
+        "baostock_code": "sh.000852",
+        "akshare_symbol": "sh000852",
+        "source": "baostock",
+        "weight": 1.0,
+    },
+    {
+        "code": "399006",
+        "name": "创业板指",
+        "baostock_code": "sz.399006",
+        "akshare_symbol": "sz399006",
+        "source": "baostock",
+        "weight": 1.0,
+    },
+    {
+        "code": "000688",
+        "name": "科创50",
+        "baostock_code": "sh.000688",
+        "akshare_symbol": "sh000688",
+        "source": "akshare",
+        "weight": 1.0,
+    },
+]
 
 
 # ── 校验 ──
@@ -54,6 +120,59 @@ def _validate_etf_list(raw: list) -> list[EtfItem]:
             category=item.get("category", "broad"),
         ))
     return items
+
+
+def _validate_market_indices(raw: list | None) -> list[MarketIndexItem]:
+    """校验并转换市场指数配置列表。"""
+    source = raw if raw else _DEFAULT_MARKET_INDICES
+    items = []
+    for i, item in enumerate(source):
+        if not isinstance(item, dict):
+            raise ValueError(f"market.indices[{i}] 需为 dict")
+        code = str(item.get("code", "")).strip()
+        if not code:
+            raise ValueError(f"market.indices[{i}] 缺少必填字段 code")
+        data_source = str(item.get("source", "auto"))
+        if data_source not in {"auto", "baostock", "akshare"}:
+            raise ValueError(
+                f"market.indices[{i}].source 无效: {data_source}，仅支持 auto/baostock/akshare"
+            )
+        weight = item.get("weight", 1.0)
+        if not isinstance(weight, (int, float)) or weight <= 0:
+            raise ValueError(f"market.indices[{i}].weight 需 > 0，实际: {weight}")
+        items.append(MarketIndexItem(
+            code=code,
+            name=item.get("name", ""),
+            baostock_code=item.get("baostock_code", ""),
+            akshare_symbol=item.get("akshare_symbol", ""),
+            source=data_source,
+            weight=float(weight),
+        ))
+    return items
+
+
+def _validate_market_regime(raw: dict) -> dict:
+    """校验市场热度门控配置。"""
+    params = raw.get("regime", {}) if isinstance(raw, dict) else {}
+    result = {
+        "enabled": params.get("enabled", True),
+        "lookback_days": params.get("lookback_days", 180),
+        "min_indices": params.get("min_indices", 4),
+        "hot_score": params.get("hot_score", 0.55),
+        "cold_score": params.get("cold_score", -0.55),
+        "hot_ratio": params.get("hot_ratio", 0.5),
+        "cold_ratio": params.get("cold_ratio", 0.5),
+    }
+    if not isinstance(result["enabled"], bool):
+        raise ValueError("market.regime.enabled 需为 bool")
+    if not isinstance(result["lookback_days"], int) or result["lookback_days"] < 90:
+        raise ValueError("market.regime.lookback_days 需为 >= 90 的整数")
+    if not isinstance(result["min_indices"], int) or result["min_indices"] < 1:
+        raise ValueError("market.regime.min_indices 需为 >= 1 的整数")
+    for key in ("hot_score", "cold_score", "hot_ratio", "cold_ratio"):
+        if not isinstance(result[key], (int, float)):
+            raise ValueError(f"market.regime.{key} 需为数字")
+    return result
 
 
 def _build_db_url(driver: str) -> str:
@@ -101,7 +220,13 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
             "ma_long": params.get("ma_long", 60),
             "weights": {k: weights[k] for k in required_keys},
             "thresholds": {"buy": buy, "sell": sell},
+            "cooldown_days": params.get("cooldown_days", 5),
         }
+        cooldown_days = params["cooldown_days"]
+        if not isinstance(cooldown_days, int) or cooldown_days < 0:
+            raise ValueError(
+                f"strategy.params.cooldown_days 需为 >= 0 的整数，实际: {cooldown_days}"
+            )
     return stype, params
 
 
@@ -191,6 +316,8 @@ def load_config(path: str | Path = "settings.yaml") -> AppConfig:
         strategy_type=stype,
         strategy_params=sparams,
         risk_rules=_validate_risk_rules(raw.get("risk_control", {}).get("rules", [])),
+        market_indices=_validate_market_indices(raw.get("market", {}).get("indices")),
+        market_regime_params=_validate_market_regime(raw.get("market", {})),
         lookback_days=_validate_lookback_days(raw.get("data", {})),
         scheduler_run_time=run_time,
         scheduler_timezone=timezone,

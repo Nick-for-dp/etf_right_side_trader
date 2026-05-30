@@ -15,12 +15,13 @@ class HistoryFetcher:
     """Tushare 历史行情数据拉取器。
 
     作为现有 BaoStock + AKShare 链路的补充：Tushare API 稳定性高，适合一次性拉取
-    上市以来的全量历史日线（含复权处理），但缺少 NAV/净值信息，溢价率无法计算。
-    日常增量同步继续走 DailyFetcher 的 BaoStock + AKShare 方案。
+    ETF 和宽基指数的历史日线。
 
-    单位转换（与 DailyFetcher 对齐）：
-    - volume: Tushare 原始单位是"手"，保持不变（BaoStock 已从"股"转为"手"）
-    - amount:  Tushare 原始单位是"千元" → 统一转为"元"（×1000）
+    单位转换：
+    - ETF volume: Tushare fund_daily 原始单位是"手"，保持不变，与 Quote 链路一致。
+    - 指数 volume: Tushare index_daily 原始单位是"手"，转换为"股"（×100），
+      与 BaoStock / AKShare 指数日常链路一致。
+    - amount: Tushare 原始单位是"千元"，统一转为"元"（×1000）。
     """
 
     def __init__(self):
@@ -33,6 +34,78 @@ class HistoryFetcher:
         if tushare_url:
             self.pro._DataApi__http_url = tushare_url
             logger.info("Tushare API 端点已设置为自定义地址")
+
+    @rate_limit(min_interval=2.0, key="tushare")
+    def get_index_history_from_tushare(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """从 Tushare 获取宽基指数历史日线行情。
+
+        Tushare 的 index_daily 接口返回宽基指数 OHLCV 和成交额。返回结果会
+        转换为 market_index_quote 表对应字段，可直接构造 MarketIndexQuote。
+
+        Args:
+            symbol: 宽基指数代码（6 位数字，如 "000300"）
+            start_date: 开始日期，格式 "YYYYMMDD"
+            end_date: 结束日期，格式 "YYYYMMDD"
+
+        Returns:
+            包含以下列的 DataFrame，无数据时返回 None：
+            - index_code:     宽基指数代码
+            - date:           交易日期
+            - open/high/low/close: OHLC
+            - volume:         成交量（股），与 BaoStock / AKShare 指数日常链路一致
+            - amount:         成交额（元）
+
+        Example:
+            >>> fetcher = HistoryFetcher()
+            >>> df = fetcher.get_index_history_from_tushare("000300", "20200101", "20201231")
+            >>> print(df.columns.tolist())
+            ['index_code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount']
+        """
+        # ── step 1: 补全交易所后缀，转换为 Tushare ts_code 格式 ──
+        symbol = symbol.strip()
+        if len(symbol) != 6:
+            raise ValueError(f"指数代码长度必须为 6 位，输入代码 {symbol} 不符合要求。")
+        if symbol.startswith("399"):
+            ts_code = f"{symbol}.SZ"
+        else:
+            ts_code = f"{symbol}.SH"
+
+        # ── step 2: 拉取宽基指数日线行情 ──
+        # Tushare index_daily 字段名：vol（成交量，手）、amount（成交额，千元）
+        price_df = self.pro.index_daily(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            fields="trade_date,open,high,low,close,vol,amount",
+        )
+        if price_df.empty:
+            logger.info(f"指数 {ts_code} 在 {start_date} ~ {end_date} 之间无行情数据。")
+            return None
+
+        df = price_df.rename(columns={"trade_date": "date", "vol": "volume"})
+        df = df.sort_values("date").reset_index(drop=True)
+
+        # index_daily: volume 为手，amount 为千元；转为日常指数链路使用的股/元口径。
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce") * 100
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce") * 1000
+        for col in ["open", "high", "low", "close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d").dt.date
+        df["index_code"] = symbol
+
+        logger.info(
+            f"成功获取 {symbol} {start_date} ~ {end_date} 的指数历史行情 "
+            f"（Tushare），共 {len(df)} 条记录。"
+        )
+
+        return df[["index_code", "date", "open", "high", "low", "close",
+                   "volume", "amount"]]
 
     @rate_limit(min_interval=2.0, key="tushare")
     def get_etf_history_from_tushare(

@@ -6,8 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from src.config import load_config
-from src.database import positions_repo, quote_repo, advice_repo
-from src.models import Position
+from src.database import positions_repo, quote_repo, advice_repo, trade_records_repo
+from src.models import TradeAction, TradeRecord
 from src.service import TradingCalendarService, PositionService
 
 _CONFIG = load_config()
@@ -105,6 +105,13 @@ def run():
         if st.button("确认建仓/加仓", type="primary"):
             pos = PositionService.add(code, round(cost, 4), shares, entry_date)
             verb = "加仓" if existing else "建仓"
+            trade_records_repo.save(TradeRecord(
+                code=code,
+                action=TradeAction.ADD if existing else TradeAction.BUY,
+                trade_date=entry_date,
+                price=round(cost, 4),
+                shares=shares,
+            ))
             st.success(f"已{verb} {code}，均价 {pos.cost:.4f}，{pos.shares} 股")
             st.rerun()
 
@@ -134,6 +141,13 @@ def run():
             )
             if st.button("确认减仓", type="primary"):
                 result = PositionService.reduce(reduce_code, sell_shares)
+                trade_records_repo.save(TradeRecord(
+                    code=reduce_code,
+                    action=TradeAction.SELL if result is None else TradeAction.REDUCE,
+                    trade_date=date.today(),
+                    price=round(sell_price, 4),
+                    shares=sell_shares,
+                ))
                 if result is None:
                     st.success(f"已清仓 {reduce_code}")
                 else:

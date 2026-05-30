@@ -4,12 +4,13 @@
     python main.py init                          首次初始化（全量 ETF）
     python main.py init --symbol 588000          增量回填单只 ETF
     python main.py init --symbol 588000 --start 2024-01-01
+    python main.py init-market --start 2022-01-01  初始化指数历史行情和市场热度
     python main.py backfill-tushare              Tushare 历史 OHLCV 回填（临时，全量 ETF）
     python main.py backfill-tushare --symbol 588000 --start 20200101
     python main.py run                           执行一次每日流程（STEP 1-5）
     python main.py schedule                      启动每日 07:00 定时调度
     python main.py dashboard                     启动 Streamlit 仪表盘
-    python main.py backtest-odds                  V2.0 vs V2.1A 赔率门控回测对比
+    python main.py backtest-odds                  V2.0 vs V2.1A vs V2.2-market 回测对比
     python main.py backtest-odds --symbol 588000  单只 ETF 回测试算
 """
 
@@ -35,6 +36,19 @@ def main():
         help="回填起始日期 YYYY-MM-DD，不传则按 lookback_days 推算",
     )
 
+    market_parser = sub.add_parser(
+        "init-market",
+        help="初始化指数历史行情和市场热度",
+    )
+    market_parser.add_argument(
+        "--start", type=str, default=None,
+        help="起始日期 YYYY-MM-DD，不传则按 lookback_days 推算",
+    )
+    market_parser.add_argument(
+        "--end", type=str, default=None,
+        help="截止日期 YYYY-MM-DD，不传则为 T-1",
+    )
+
     # 临时命令：Tushare 历史回填（token 过期前使用）
     tushare_parser = sub.add_parser(
         "backfill-tushare",
@@ -54,7 +68,7 @@ def main():
     )
 
     # 赔率门控回测对比
-    backtest_parser = sub.add_parser("backtest-odds", help="V2.0 vs V2.1A 赔率门控回测对比")
+    backtest_parser = sub.add_parser("backtest-odds", help="V2.0 vs V2.1A vs V2.2-market 回测对比")
     backtest_parser.add_argument(
         "--symbol", type=str, default=None,
         help="单只 ETF 代码，不传则覆盖全部配置 ETF",
@@ -78,6 +92,11 @@ def main():
         from init_db import init_system
         start_date = date.fromisoformat(args.start) if args.start else None
         init_system(symbol=args.symbol, start_date=start_date)
+    elif args.command == "init-market":
+        from init_db import init_market_data
+        start_date = date.fromisoformat(args.start) if args.start else None
+        end_date = date.fromisoformat(args.end) if args.end else None
+        init_market_data(start_date=start_date, end_date=end_date)
     elif args.command == "backfill-tushare":
         from src.config import load_config
         from src.database import init_engine, dispose_engine

@@ -14,12 +14,19 @@ from src.config import load_config, AppConfig
 from src.database import (
     init_engine, dispose_engine,
     indicators_repo, signals_repo, positions_repo, advice_repo, quote_repo,
+    trade_records_repo, market_regime_repo,
 )
 from src.fetcher import DailyFetcher, DataManager
 from src.indicators import MASystem, MACD, Bollinger, RSI, VolumeIndicator, LongTermOdds
 from src.models import OperationAdvice
 from src.risk import RiskController
-from src.service import TradingCalendarService, IndicatorService, PositionService, QuoteService
+from src.service import (
+    TradingCalendarService,
+    IndicatorService,
+    PositionService,
+    QuoteService,
+    MarketRegimeService,
+)
 from src.strategy import create_strategy
 from src.utils import get_logger
 
@@ -48,6 +55,7 @@ def run_daily(target_date: date | None = None) -> None:
 
     _step1_sync_data(config, calendar)
     _step2_calc_indicators(config, t_minus_1)
+    _step2b_calc_market_regime(config, t_minus_1)
     _step3_generate_signals(config, t_minus_1)
     risk_signals = _step4_risk_check(t_minus_1)
     _step5_generate_advice(config, t_minus_1, risk_signals)
@@ -63,6 +71,7 @@ def _step1_sync_data(config: AppConfig, calendar: TradingCalendarService) -> Non
     fetcher = DailyFetcher()
     dm = DataManager(config, fetcher, calendar)
     dm.sync_daily()
+    dm.sync_market_indices_daily()
 
 
 # ── STEP 2 ──
@@ -83,6 +92,18 @@ def _step2_calc_indicators(config: AppConfig, t_minus_1: date) -> None:
     for etf in config.etf_list:
         n = service.calculate_and_save(etf.symbol, t_minus_1, t_minus_1)
         logger.info(f"STEP2: {etf.symbol} 写入 {n} 条指标")
+
+
+def _step2b_calc_market_regime(config: AppConfig, t_minus_1: date) -> None:
+    """STEP 2B：计算并保存 T-1 市场热度状态。"""
+    if not config.market_regime_params.get("enabled", True):
+        logger.info("STEP2B: 市场热度门控未启用，跳过")
+        return
+    service = MarketRegimeService(config.market_indices, config.market_regime_params)
+    regime = service.calculate_and_save(t_minus_1)
+    logger.info(
+        f"STEP2B: market_regime {t_minus_1} state={regime.state} score={regime.score}"
+    )
 
 
 # ── STEP 3 ──
@@ -196,6 +217,7 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         }
         for p in positions
     ]
+    position_entry_dates = {p.code: p.entry_date for p in positions}
 
     all_signals = signals_repo.find_by_date(t_minus_1)
     signal_rows = [
@@ -211,12 +233,28 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         return
 
     current_prices: dict[str, float] = {}
+    last_buy_dates: dict[str, date] = {}
     # v2.1A：从 indicators 表提取 T-1 赔率数据，组装 odds_map 传入 advisor
     odds_map: dict[str, dict] = {}
+    market_regime_record = market_regime_repo.find_by_date(t_minus_1)
+    market_regime = (
+        {
+            "state": market_regime_record.state,
+            "score": market_regime_record.score,
+            "data": market_regime_record.data,
+        }
+        if market_regime_record is not None
+        else {"state": "UNKNOWN"}
+    )
     for etf in config.etf_list:
         latest = quote_repo.find_latest_quote(etf.symbol)
         if latest is not None:
             current_prices[etf.symbol] = latest.close
+        last_buy_date = trade_records_repo.find_latest_buy_date(etf.symbol, t_minus_1)
+        if last_buy_date is None:
+            last_buy_date = position_entry_dates.get(etf.symbol)
+        if last_buy_date is not None:
+            last_buy_dates[etf.symbol] = last_buy_date
         # 读取 T-1 日指标（含 odds 字段）
         ind_list = indicators_repo.find_by_code_between(etf.symbol, t_minus_1, t_minus_1)
         if ind_list:
@@ -233,6 +271,9 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         current_prices, 
         risk_signals,
         odds_map=odds_map,
+        market_regime=market_regime,
+        last_buy_dates=last_buy_dates,
+        add_cooldown_days=config.strategy_params.get("cooldown_days", 5),
     )
     records = [OperationAdvice(**a) for a in advices]
     advice_repo.save_batch(records)

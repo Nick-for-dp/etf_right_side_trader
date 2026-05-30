@@ -3,9 +3,9 @@
 from datetime import date, timedelta
 
 from src.config import AppConfig
-from src.database import quote_repo
+from src.database import market_index_quote_repo, quote_repo
 from .base import BaseFetcher
-from src.models import Quote
+from src.models import MarketIndexQuote, Quote
 from src.service import TradingCalendarService
 from src.utils import get_logger
 
@@ -59,6 +59,37 @@ class DataManager:
             n = self._fetch_and_save(etf.symbol, start_date.isoformat(), t_minus_1)
             logger.info(f"sync_daily: {etf.symbol} 写入 {n} 条, "
                         f"{start_date.isoformat()} ~ {t_minus_1}")
+
+    def sync_market_indices_daily(self) -> None:
+        """每日增量同步市场宽基指数行情。"""
+        from .market_index_fetcher import MarketIndexFetcher
+
+        t_minus_1 = self.calendar.get_previous_trading_day()
+        t_minus_1_date = date.fromisoformat(t_minus_1)
+        fetcher = MarketIndexFetcher()
+
+        for index in self.config.market_indices:
+            latest = market_index_quote_repo.find_latest_date(index.code)
+
+            if latest and latest >= t_minus_1_date:
+                continue
+
+            if latest:
+                start_date = latest + timedelta(days=1)
+            else:
+                lookback_days = self.config.market_regime_params.get("lookback_days", 180)
+                start_date = t_minus_1_date - timedelta(days=lookback_days)
+
+            df = fetcher.fetch_daily(index, start_date.isoformat(), t_minus_1)
+            if df.empty:
+                logger.warning(f"sync_market_indices: {index.code} 无新增数据")
+                continue
+            records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
+            market_index_quote_repo.save_batch(records)
+            logger.info(
+                f"sync_market_indices: {index.code} 写入 {len(records)} 条, "
+                f"{start_date.isoformat()} ~ {t_minus_1}"
+            )
 
     def backfill(self, symbol: str | None = None,
                  start_date: date | None = None) -> None:

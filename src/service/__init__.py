@@ -8,6 +8,7 @@ from .profit_analysis_service import (
 )
 from .quote_service import QuoteService
 from .backtest_comparison import BacktestComparison
+from .market_regime_service import MarketRegimeService
 
 __all__ = [
     "TradingCalendarService",
@@ -18,4 +19,5 @@ __all__ = [
     "calculate_equity_curve",
     "get_summary",
     "BacktestComparison",
+    "MarketRegimeService",
 ]

@@ -15,7 +15,7 @@ import pandas as pd
 
 from src.advisor import generate_advice
 from src.config import load_config
-from src.database import indicators_repo, quote_repo, signals_repo
+from src.database import indicators_repo, market_regime_repo, quote_repo, signals_repo
 from src.models import VirtualTrade
 from src.service.calendar_service import TradingCalendarService
 from src.service.profit_analysis_service import _simulate_trade_engine, get_summary
@@ -48,7 +48,12 @@ class OddsGateBacktest:
 
     def load_data(
         self, codes: list[str], start: date, end: date
-    ) -> tuple[pd.DataFrame, dict[str, dict[str, float]], dict[str, dict[str, dict]]]:
+    ) -> tuple[
+        pd.DataFrame,
+        dict[str, dict[str, float]],
+        dict[str, dict[str, dict]],
+        dict[str, dict],
+    ]:
         """从 indicators + quote + signals 表加载回测所需数据。
 
         策略信号从 signals 表读取（已持久化的生产信号），而非重新生成，
@@ -60,10 +65,11 @@ class OddsGateBacktest:
             end:   回测结束日期
 
         Returns:
-            (df, price_map, odds_map_full):
+            (df, price_map, odds_map_full, market_regime_map):
             - df:           columns = [code, date, close, signal, signal_meta, ma20, ma60, ...]
             - price_map:    {code: {date_str: close}}
             - odds_map_full: {code: {date_str: {odds_state, odds_score, premium_blocked}}}
+            - market_regime_map: {date_str: {state, score, data}}
         """
         fetch_start = start - timedelta(days=120)
 
@@ -118,7 +124,12 @@ class OddsGateBacktest:
                 rows.append(row)
 
         df = pd.DataFrame(rows).sort_values(["code", "date"]).reset_index(drop=True)
-        return df, price_map, odds_map_full
+        regimes = market_regime_repo.find_between(start, end)
+        market_regime_map = {
+            str(r.date): {"state": r.state, "score": r.score, "data": r.data}
+            for r in regimes
+        }
+        return df, price_map, odds_map_full, market_regime_map
 
     # ── 单版本模拟 ──
 
@@ -128,6 +139,8 @@ class OddsGateBacktest:
         price_map: dict[str, dict[str, float]],
         odds_map_full: dict[str, dict[str, dict]],
         use_odds_gate: bool,
+        use_market_gate: bool = False,
+        market_regime_map: dict[str, dict] | None = None,
     ) -> tuple[list[VirtualTrade], pd.DataFrame, dict]:
         """对指定版本（v2.0 或 v2.1A）运行完整交易模拟。
 
@@ -141,6 +154,7 @@ class OddsGateBacktest:
         empty_stats = {
             "buys_blocked": 0, "buy_events": 0, "add_events": 0,
             "sell_events": 0, "open_positions": 0, "closed_trades": 0,
+            "market_blocked": 0,
         }
         if df.empty:
             return [], pd.DataFrame(), empty_stats
@@ -155,6 +169,8 @@ class OddsGateBacktest:
         buy_events = 0
         add_events = 0
         sell_events = 0
+        market_blocked = 0
+        market_regime_map = market_regime_map or {}
 
         all_dates = sorted(df["date"].unique())
 
@@ -180,30 +196,55 @@ class OddsGateBacktest:
                     if code_odds:
                         odds_map[code] = code_odds
 
-            # 调用 advisor
+            # 调用 advisor。统计口径需要分离：赔率拦截只比较“无门控→赔率门控”，
+            # 市场拦截只比较“赔率门控→赔率+市场门控”。
             pos_list = list(sim_positions.values())
+            raw_advices = generate_advice(
+                positions=pos_list,
+                signals=pd.DataFrame(signal_rows),
+                current_prices={},
+                risk_signals={},
+                odds_map=None,
+                market_regime=None,
+            )
+            odds_only_advices = generate_advice(
+                positions=pos_list,
+                signals=pd.DataFrame(signal_rows),
+                current_prices={},
+                risk_signals={},
+                odds_map=odds_map if use_odds_gate else None,
+                market_regime=None,
+            )
             advices = generate_advice(
                 positions=pos_list,
                 signals=pd.DataFrame(signal_rows),
                 current_prices={},
                 risk_signals={},
                 odds_map=odds_map if use_odds_gate else None,
+                market_regime=(
+                    market_regime_map.get(signal_date_str)
+                    if use_market_gate else None
+                ),
             )
 
             # 统计被拦截的买入建议：v2.0 建议是建仓/加仓，但 v2.1A 被 override
             if use_odds_gate:
-                raw_advices = generate_advice(
-                    positions=pos_list,
-                    signals=pd.DataFrame(signal_rows),
-                    current_prices={},
-                    risk_signals={},
-                    odds_map=None,
-                )
                 raw_action_map = {a["code"]: a["advice"] for a in raw_advices}
-                for adv in advices:
+                for adv in odds_only_advices:
                     raw_action = raw_action_map.get(adv["code"], "")
                     if raw_action in ("建仓", "加仓") and adv["advice"] != raw_action:
                         buys_blocked += 1
+
+            if use_market_gate:
+                raw_action_map = {a["code"]: a["advice"] for a in odds_only_advices}
+                for adv in advices:
+                    raw_action = raw_action_map.get(adv["code"], "")
+                    if (
+                        raw_action in ("建仓", "加仓")
+                        and adv["advice"] != raw_action
+                        and adv.get("signal_source") == "market_regime"
+                    ):
+                        market_blocked += 1
 
             # 根据 advice 更新模拟持仓 + 收集事件
             for adv in advices:
@@ -303,6 +344,7 @@ class OddsGateBacktest:
             "sell_events": sell_events,
             "open_positions": open_count,
             "closed_trades": closed_count,
+            "market_blocked": market_blocked,
         }
         return all_trades, equity_curve, stats
 
@@ -332,7 +374,7 @@ class OddsGateBacktest:
                 "meta": {"start": date, "end": date, "codes": [...], "cost_ratio": float},
             }
         """
-        df, price_map, odds_map_full = self.load_data(codes, start, end)
+        df, price_map, odds_map_full, market_regime_map = self.load_data(codes, start, end)
 
         if df.empty:
             empty_summary = get_summary([])
@@ -340,6 +382,9 @@ class OddsGateBacktest:
                 "v20": {"trades": [], "summary": empty_summary, "equity_curve": pd.DataFrame()},
                 "v21": {"trades": [], "summary": empty_summary, "equity_curve": pd.DataFrame(),
                         "buys_blocked": 0},
+                "v22_market": {"trades": [], "summary": empty_summary,
+                               "equity_curve": pd.DataFrame(),
+                               "stats": {"market_blocked": 0}},
                 "per_etf": [],
                 "meta": {"start": start, "end": end, "codes": codes, "cost_ratio": 0.0},
             }
@@ -358,6 +403,17 @@ class OddsGateBacktest:
             df, price_map, odds_map_full, use_odds_gate=True
         )
 
+        # ── V2.2（赔率门控 + 市场热度门控）──
+        logger.info("运行 V2.2（赔率门控 + 市场热度门控）...")
+        v22_trades, v22_equity, v22_stats = self._simulate_version(
+            df,
+            price_map,
+            odds_map_full,
+            use_odds_gate=True,
+            use_market_gate=True,
+            market_regime_map=market_regime_map,
+        )
+
         # ── 交易成本估算 ──
         # 默认 万 0.5（ETF 佣金），在对比中统一扣除
         cost_ratio = 0.00005
@@ -367,16 +423,20 @@ class OddsGateBacktest:
         for code in codes:
             v20_code_trades = [t for t in v20_trades if t.code == code]
             v21_code_trades = [t for t in v21_trades if t.code == code]
+            v22_code_trades = [t for t in v22_trades if t.code == code]
 
             # 扣除交易成本后的累计盈亏
             v20_summary_raw = get_summary(v20_code_trades)
             v21_summary_raw = get_summary(v21_code_trades)
+            v22_summary_raw = get_summary(v22_code_trades)
 
             v20_trade_count = v20_summary_raw["total_trades"]
             v21_trade_count = v21_summary_raw["total_trades"]
+            v22_trade_count = v22_summary_raw["total_trades"]
 
             v20_summary = dict(v20_summary_raw)
             v21_summary = dict(v21_summary_raw)
+            v22_summary = dict(v22_summary_raw)
 
             # 每笔交易扣除双边成本（买+卖）
             v20_summary["cumulative_pnl_pct"] = round(
@@ -385,27 +445,37 @@ class OddsGateBacktest:
             v21_summary["cumulative_pnl_pct"] = round(
                 v21_summary_raw["cumulative_pnl_pct"] - v21_trade_count * 2 * cost_ratio, 6
             )
+            v22_summary["cumulative_pnl_pct"] = round(
+                v22_summary_raw["cumulative_pnl_pct"] - v22_trade_count * 2 * cost_ratio, 6
+            )
 
             per_etf.append({
                 "code": code,
                 "v20_summary": v20_summary,
                 "v21_summary": v21_summary,
+                "v22_market_summary": v22_summary,
                 "v20_trades": v20_code_trades,
                 "v21_trades": v21_code_trades,
+                "v22_market_trades": v22_code_trades,
             })
 
         # ── 全量汇总 ──
         v20_summary_all = get_summary(v20_trades)
         v21_summary_all = get_summary(v21_trades)
+        v22_summary_all = get_summary(v22_trades)
 
         v20_total_trades = v20_summary_all["total_trades"]
         v21_total_trades = v21_summary_all["total_trades"]
+        v22_total_trades = v22_summary_all["total_trades"]
 
         v20_summary_all["cumulative_pnl_pct"] = round(
             v20_summary_all["cumulative_pnl_pct"] - v20_total_trades * 2 * cost_ratio, 6
         )
         v21_summary_all["cumulative_pnl_pct"] = round(
             v21_summary_all["cumulative_pnl_pct"] - v21_total_trades * 2 * cost_ratio, 6
+        )
+        v22_summary_all["cumulative_pnl_pct"] = round(
+            v22_summary_all["cumulative_pnl_pct"] - v22_total_trades * 2 * cost_ratio, 6
         )
 
         result = {
@@ -420,6 +490,12 @@ class OddsGateBacktest:
                 "summary": v21_summary_all,
                 "equity_curve": v21_equity,
                 "stats": v21_stats,
+            },
+            "v22_market": {
+                "trades": v22_trades,
+                "summary": v22_summary_all,
+                "equity_curve": v22_equity,
+                "stats": v22_stats,
             },
             "per_etf": per_etf,
             "meta": {
@@ -437,7 +513,11 @@ class OddsGateBacktest:
             f"V2.1A trades={v21_total_trades}(closed) events="
             f"B{v21_stats['buy_events']}/A{v21_stats['add_events']}/"
             f"S{v21_stats['sell_events']}, "
-            f"blocked={v21_stats['buys_blocked']}"
+            f"blocked={v21_stats['buys_blocked']}, "
+            f"V2.2-market trades={v22_total_trades}(closed) events="
+            f"B{v22_stats['buy_events']}/A{v22_stats['add_events']}/"
+            f"S{v22_stats['sell_events']}, "
+            f"market_blocked={v22_stats['market_blocked']}"
         )
         return result
 
@@ -503,9 +583,10 @@ def format_comparison_report(result: dict) -> str:
     meta = result["meta"]
     v20 = result["v20"]
     v21 = result["v21"]
+    v22 = result.get("v22_market")
 
     lines = [
-        "# V2.0 vs V2.1A 赔率门控回测报告",
+        "# V2.0 vs V2.1A vs V2.2 市场热度门控回测报告",
         "",
         f"**回测区间**: {meta['start']} ~ {meta['end']}",
         f"**ETF 数量**: {len(meta['codes'])}",
@@ -513,33 +594,42 @@ def format_comparison_report(result: dict) -> str:
         "",
         "## 事件统计",
         "",
-        "| 事件 | V2.0 (无门控) | V2.1A (有门控) |",
-        "|------|-------------|-------------|",
+        "| 事件 | V2.0 (无门控) | V2.1A (赔率门控) | V2.2 (赔率+市场) |",
+        "|------|-------------|-------------|-------------|",
     ]
 
     v20_stats = v20.get("stats", {})
     v21_stats = v21.get("stats", {})
+    v22_stats = v22.get("stats", {}) if v22 else {}
 
     lines.append(
-        f"| 建仓 | {v20_stats.get('buy_events', 0)} | {v21_stats.get('buy_events', 0)} |"
+        f"| 建仓 | {v20_stats.get('buy_events', 0)} | "
+        f"{v21_stats.get('buy_events', 0)} | {v22_stats.get('buy_events', 0)} |"
     )
     lines.append(
-        f"| 加仓 | {v20_stats.get('add_events', 0)} | {v21_stats.get('add_events', 0)} |"
+        f"| 加仓 | {v20_stats.get('add_events', 0)} | "
+        f"{v21_stats.get('add_events', 0)} | {v22_stats.get('add_events', 0)} |"
     )
     lines.append(
-        f"| 卖出 | {v20_stats.get('sell_events', 0)} | {v21_stats.get('sell_events', 0)} |"
+        f"| 卖出 | {v20_stats.get('sell_events', 0)} | "
+        f"{v21_stats.get('sell_events', 0)} | {v22_stats.get('sell_events', 0)} |"
     )
     lines.append(
         f"| 未平仓 | {v20_stats.get('open_positions', 0)} | "
-        f"{v21_stats.get('open_positions', 0)} |"
+        f"{v21_stats.get('open_positions', 0)} | {v22_stats.get('open_positions', 0)} |"
     )
     lines.append(
-        f"| 买入被拦截 | — | {v21_stats.get('buys_blocked', 0)} |"
+        f"| 赔率买入拦截 | — | {v21_stats.get('buys_blocked', 0)} | "
+        f"{v22_stats.get('buys_blocked', 0)} |"
+    )
+    lines.append(
+        f"| 市场热度拦截 | — | — | {v22_stats.get('market_blocked', 0)} |"
     )
     lines.append("")
 
     s20 = v20["summary"]
     s21 = v21["summary"]
+    s22 = v22["summary"] if v22 else None
 
     # 如果已平仓交易为 0，提示窗口太短
     if s20.get("total_trades", 0) == 0 and s21.get("total_trades", 0) == 0:
@@ -551,8 +641,8 @@ def format_comparison_report(result: dict) -> str:
 
     lines.append("## 全量汇总（已平仓交易）")
     lines.append("")
-    lines.append("| 指标 | V2.0 (无门控) | V2.1A (有门控) | 变化 |")
-    lines.append("|------|-------------|-------------|------|")
+    lines.append("| 指标 | V2.0 (无门控) | V2.1A (赔率门控) | V2.2 (赔率+市场) | V2.2 较 V2.1A |")
+    lines.append("|------|-------------|-------------|-------------|------|")
 
     def _delta_str(v20_val: float, v21_val: float, fmt: str = ".2f",
                    inverse_good: bool = False) -> str:
@@ -574,31 +664,35 @@ def format_comparison_report(result: dict) -> str:
 
     s20 = v20["summary"]
     s21 = v21["summary"]
+    s22 = v22["summary"] if v22 else s21
 
     metrics = [
-        ("交易次数", s20["total_trades"], s21["total_trades"], ".0f", False),
-        ("胜率", s20["win_rate"], s21["win_rate"], ".1%", False),
-        ("累计盈亏", s20["cumulative_pnl_pct"], s21["cumulative_pnl_pct"], ".4%", False),
-        ("最大回撤", s20["max_drawdown"], s21["max_drawdown"], ".4%", True),
-        ("平均盈亏", s20["avg_pnl_pct"], s21["avg_pnl_pct"], ".4%", False),
-        ("最大单笔盈利", s20["max_win"], s21["max_win"], ".4%", False),
-        ("最大单笔亏损", s20["max_loss"], s21["max_loss"], ".4%", True),
-        ("平均持有天数", s20["avg_holding_days"], s21["avg_holding_days"], ".1f", False),
+        ("交易次数", s20["total_trades"], s21["total_trades"], s22["total_trades"], ".0f", False),
+        ("胜率", s20["win_rate"], s21["win_rate"], s22["win_rate"], ".1%", False),
+        ("累计盈亏", s20["cumulative_pnl_pct"], s21["cumulative_pnl_pct"], s22["cumulative_pnl_pct"], ".4%", False),
+        ("最大回撤", s20["max_drawdown"], s21["max_drawdown"], s22["max_drawdown"], ".4%", True),
+        ("平均盈亏", s20["avg_pnl_pct"], s21["avg_pnl_pct"], s22["avg_pnl_pct"], ".4%", False),
+        ("最大单笔盈利", s20["max_win"], s21["max_win"], s22["max_win"], ".4%", False),
+        ("最大单笔亏损", s20["max_loss"], s21["max_loss"], s22["max_loss"], ".4%", True),
+        ("平均持有天数", s20["avg_holding_days"], s21["avg_holding_days"], s22["avg_holding_days"], ".1f", False),
     ]
 
-    for label, v20_val, v21_val, fmt, inverse in metrics:
+    for label, v20_val, v21_val, v22_val, fmt, inverse in metrics:
         if isinstance(v20_val, float) and fmt.endswith("%"):
             v20_str = f"{v20_val:{fmt}}"
             v21_str = f"{v21_val:{fmt}}"
+            v22_str = f"{v22_val:{fmt}}"
         elif isinstance(v20_val, float):
             v20_str = f"{v20_val:{fmt}}"
             v21_str = f"{v21_val:{fmt}}"
+            v22_str = f"{v22_val:{fmt}}"
         else:
             v20_str = f"{v20_val}"
             v21_str = f"{v21_val}"
+            v22_str = f"{v22_val}"
         lines.append(
-            f"| {label} | {v20_str} | {v21_str} | "
-            f"{_delta_str(float(v20_val), float(v21_val), fmt.replace('%',''), inverse)} |"
+            f"| {label} | {v20_str} | {v21_str} | {v22_str} | "
+            f"{_delta_str(float(v21_val), float(v22_val), fmt.replace('%',''), inverse)} |"
         )
 
     # 按 ETF 明细
@@ -606,8 +700,8 @@ def format_comparison_report(result: dict) -> str:
     lines.append("## 按 ETF 明细")
     lines.append("")
     lines.append(
-        "| ETF | V2.0 交易数 | V2.1A 交易数 | V2.0 累计盈亏 | V2.1A 累计盈亏 | "
-        "V2.0 胜率 | V2.1A 胜率 | V2.0 最大回撤 | V2.1A 最大回撤 |"
+        "| ETF | V2.1A 交易数 | V2.2 交易数 | V2.1A 累计盈亏 | V2.2 累计盈亏 | "
+        "V2.1A 胜率 | V2.2 胜率 | V2.1A 最大回撤 | V2.2 最大回撤 |"
     )
     lines.append(
         "|-----|-----------|-----------|------------|------------|"
@@ -615,13 +709,13 @@ def format_comparison_report(result: dict) -> str:
     )
 
     for etf in result.get("per_etf", []):
-        v20s = etf["v20_summary"]
         v21s = etf["v21_summary"]
+        v22s = etf.get("v22_market_summary", v21s)
         lines.append(
-            f"| {etf['code']} | {v20s['total_trades']} | {v21s['total_trades']} | "
-            f"{v20s['cumulative_pnl_pct']:+.4%} | {v21s['cumulative_pnl_pct']:+.4%} | "
-            f"{v20s['win_rate']:.1%} | {v21s['win_rate']:.1%} | "
-            f"{v20s['max_drawdown']:.4%} | {v21s['max_drawdown']:.4%} |"
+            f"| {etf['code']} | {v21s['total_trades']} | {v22s['total_trades']} | "
+            f"{v21s['cumulative_pnl_pct']:+.4%} | {v22s['cumulative_pnl_pct']:+.4%} | "
+            f"{v21s['win_rate']:.1%} | {v22s['win_rate']:.1%} | "
+            f"{v21s['max_drawdown']:.4%} | {v22s['max_drawdown']:.4%} |"
         )
 
     return "\n".join(lines)

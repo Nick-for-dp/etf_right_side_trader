@@ -1,24 +1,43 @@
-# ETF 右侧交易助手 — 配置模板
-# 复制此文件为 settings.yaml 并修改
+# ETF 右侧交易助手配置模板
+# 复制为 settings.yaml 后按需调整。本文件不包含密钥，数据库密码写入 .env。
 
 etf_list:
   - symbol: "588000"
     name: "科创50ETF"
     category: "broad"
+  - symbol: "513180"
+    name: "恒生科技ETF华夏"
+    category: "broad"
   - symbol: "513100"
     name: "纳指ETF国泰"
     category: "broad"
-  # 按需添加更多 ETF，格式同上
-  # category 建议取值：broad（宽基）/ sector（行业）
+  - symbol: "159949"
+    name: "创业板50ETF华安"
+    category: "broad"
+  - symbol: "512480"
+    name: "半导体ETF国联安"
+    category: "sector"
+  - symbol: "515700"
+    name: "新能源车ETF平安"
+    category: "sector"
 
 database:
   driver: "postgresql"
 
 strategy:
-  type: "ma_cross_macd"
+  type: "multi_indicator_scoring"
   params:
     ma_short: 20
     ma_long: 60
+    weights:
+      trend: 0.35
+      macd: 0.25
+      rsi: 0.15
+      bb: 0.25
+    thresholds:
+      buy: 50
+      sell: -50
+    cooldown_days: 5
 
 risk_control:
   rules:
@@ -30,8 +49,56 @@ risk_control:
         profit_threshold: 0.10
         drawdown_threshold: 0.03
 
+market:
+  indices:
+    - code: "000001"
+      name: "上证指数"
+      baostock_code: "sh.000001"
+      akshare_symbol: "sh000001"
+      source: "baostock"
+      weight: 1.0
+    - code: "000300"
+      name: "沪深300"
+      baostock_code: "sh.000300"
+      akshare_symbol: "sh000300"
+      source: "baostock"
+      weight: 1.0
+    - code: "000905"
+      name: "中证500"
+      baostock_code: "sh.000905"
+      akshare_symbol: "sh000905"
+      source: "baostock"
+      weight: 1.0
+    - code: "000852"
+      name: "中证1000"
+      baostock_code: "sh.000852"
+      akshare_symbol: "sh000852"
+      source: "baostock"
+      weight: 1.0
+    - code: "399006"
+      name: "创业板指"
+      baostock_code: "sz.399006"
+      akshare_symbol: "sz399006"
+      source: "baostock"
+      weight: 1.0
+    - code: "000688"
+      name: "科创50"
+      baostock_code: "sh.000688"
+      akshare_symbol: "sh000688"
+      source: "akshare"
+      weight: 1.0
+  regime:
+    enabled: true
+    lookback_days: 180
+    min_indices: 4
+    hot_score: 0.55
+    cold_score: -0.55
+    hot_ratio: 0.5
+    cold_ratio: 0.5
+
 data:
-  lookback_days: 120
+  # LongTermOdds 需要约 3 年交易窗口，1500 日历天提供足够 rolling 冗余。
+  lookback_days: 1500
 
 scheduler:
   run_time: "07:00"
