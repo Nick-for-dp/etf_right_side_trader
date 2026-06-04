@@ -39,28 +39,44 @@ class MarketRegimeService:
             if result is not None:
                 index_results.append(result)
 
+        scoring_results = [item for item in index_results if item["weight"] > 0]
+
         min_indices = self.params.get("min_indices", 4)
-        if len(index_results) < min_indices:
+        if len(scoring_results) < min_indices:
             return MarketRegime(
                 date=target_date,
                 state=MarketState.UNKNOWN.value,
                 score=None,
                 data={
                     "reason": "insufficient_index_data",
-                    "valid_indices": len(index_results),
+                    "valid_indices": len(scoring_results),
+                    "observed_indices": len(index_results),
                     "min_indices": min_indices,
                     "indices": index_results,
                 },
             )
 
-        total_weight = sum(item["weight"] for item in index_results)
-        score = sum(item["score"] * item["weight"] for item in index_results) / total_weight
+        total_weight = sum(item["weight"] for item in scoring_results)
+        if total_weight <= 0:
+            return MarketRegime(
+                date=target_date,
+                state=MarketState.UNKNOWN.value,
+                score=None,
+                data={
+                    "reason": "no_positive_index_weight",
+                    "valid_indices": len(scoring_results),
+                    "observed_indices": len(index_results),
+                    "indices": index_results,
+                },
+            )
+
+        score = sum(item["score"] * item["weight"] for item in scoring_results) / total_weight
         hot_weight = sum(
-            item["weight"] for item in index_results
+            item["weight"] for item in scoring_results
             if item["state"] == MarketState.HOT.value
         )
         cold_weight = sum(
-            item["weight"] for item in index_results
+            item["weight"] for item in scoring_results
             if item["state"] == MarketState.COLD.value
         )
 
@@ -70,11 +86,48 @@ class MarketRegimeService:
         cold_ratio = self.params.get("cold_ratio", 0.5)
 
         if score >= hot_score and hot_weight / total_weight >= hot_ratio:
-            state = MarketState.HOT
+            base_state = MarketState.HOT
         elif score <= cold_score and cold_weight / total_weight >= cold_ratio:
-            state = MarketState.COLD
+            base_state = MarketState.COLD
         else:
-            state = MarketState.NORMAL
+            base_state = MarketState.NORMAL
+
+        # ── 状态细分 ──
+        # 根据短期趋势方向和极端指标，将 HOT/COLD 拆分为更精细的子状态
+        state = base_state
+        if base_state == MarketState.HOT:
+            # 计算各评分指数 5 日平均收益率，判断 HOT 是在涨还是已开始回落
+            recent_returns = []
+            for item in scoring_results:
+                ret5 = item.get("ret5")
+                if ret5 is not None:
+                    recent_returns.append(ret5)
+            avg_5d_return = sum(recent_returns) / len(recent_returns) if recent_returns else 0
+            state = MarketState.HOT_RISING if avg_5d_return > 0 else MarketState.HOT_FALLING
+
+        elif base_state == MarketState.COLD:
+            # 取当日 RSI 最高的指数（代表"最不恐慌"的状态）
+            max_rsi = None
+            for item in scoring_results:
+                r = item.get("rsi")
+                if r is not None and (max_rsi is None or r > max_rsi):
+                    max_rsi = r
+            # 取当日均线偏离最小的指数
+            min_gap = None
+            for item in scoring_results:
+                gap = item.get("ma20_gap")
+                if gap is not None and (min_gap is None or gap < min_gap):
+                    min_gap = gap
+
+            if min_gap is not None and min_gap > -0.01:
+                # 最差的指数也已经站上 MA20 → 修复期
+                state = MarketState.RECOVERY
+            elif max_rsi is not None and max_rsi < 20:
+                # 所有指数 RSI 极低 → 恐慌低位
+                state = MarketState.PANIC
+            else:
+                # 默认：仍在下跌趋势中
+                state = MarketState.BEAR_TREND
 
         return MarketRegime(
             date=target_date,
@@ -83,7 +136,8 @@ class MarketRegimeService:
             data={
                 "hot_weight_ratio": round(hot_weight / total_weight, 4),
                 "cold_weight_ratio": round(cold_weight / total_weight, 4),
-                "valid_indices": len(index_results),
+                "valid_indices": len(scoring_results),
+                "observed_indices": len(index_results),
                 "indices": index_results,
             },
         )
@@ -123,12 +177,18 @@ def _calculate_index_state(
     activity_ma20 = activity_source.rolling(20).mean()
 
     current = close.iloc[-1]
+    ret5 = current / close.shift(5).iloc[-1] - 1.0
     ret20 = current / close.shift(20).iloc[-1] - 1.0
     ret60 = current / close.shift(60).iloc[-1] - 1.0
     ma20_val = ma20.iloc[-1]
     ma60_val = ma60.iloc[-1]
     rsi_val = rsi.iloc[-1]
-    activity_ratio = activity_source.iloc[-1] / activity_ma20.iloc[-1]
+    activity_ma20_val = activity_ma20.iloc[-1]
+    activity_ratio = (
+        activity_source.iloc[-1] / activity_ma20_val
+        if pd.notna(activity_ma20_val) and activity_ma20_val != 0
+        else pd.NA
+    )
 
     if pd.isna(ret20) or pd.isna(ret60) or pd.isna(ma20_val) or pd.isna(ma60_val):
         return None
@@ -155,6 +215,7 @@ def _calculate_index_state(
         "state": state.value,
         "score": round(float(score), 4),
         "weight": index.weight,
+        "ret5": round(float(ret5), 6) if pd.notna(ret5) else None,
         "ret20": round(float(ret20), 6),
         "ret60": round(float(ret60), 6),
         "ma20_gap": round(float(current / ma20_val - 1.0), 6),

@@ -24,6 +24,15 @@ class MarketIndexFetcher:
 
     GOOD_STATUS_CODE = "0"
 
+    # ── 源派发器：按 source 字段分发到对应采集方法 ──
+    # 新增数据源类型只需在此注册，无需修改 fetch_daily
+    SOURCE_DISPATCH = {
+        "baostock": "_fetch_from_baostock",
+        "akshare": "_fetch_from_akshare",
+        "akshare_us": "_fetch_us_index_from_akshare",
+        "akshare_hk": "_fetch_hk_index_from_akshare",
+    }
+
     def fetch_daily(
         self,
         index: MarketIndexItem,
@@ -31,6 +40,9 @@ class MarketIndexFetcher:
         end_date: str,
     ) -> pd.DataFrame:
         """拉取单个指数日线行情。
+
+        按 index.source 分发到对应采集方法。新增数据源类型只需在
+        SOURCE_DISPATCH 中注册，无需修改此方法。
 
         Args:
             index: 指数配置项
@@ -40,18 +52,32 @@ class MarketIndexFetcher:
         Returns:
             columns = [index_code, date, open, high, low, close, volume, amount]
         """
-        if index.source in {"auto", "baostock"} and index.baostock_code:
+        source = index.source
+
+        # baostock 有兜底逻辑：BaoStock 无数据时回退 AKShare
+        if source in {"auto", "baostock"} and index.baostock_code:
             df = self._fetch_from_baostock(index, start_date, end_date)
             if not df.empty:
                 return df
-            if index.source == "baostock":
+            if source == "baostock":
                 logger.warning(f"BaoStock 未返回 {index.code}，尝试 AKShare 兜底")
+            # 兜底：走 AKShare 新浪源
+            if index.akshare_symbol:
+                return self._fetch_from_akshare(index, start_date, end_date)
+            return pd.DataFrame()
 
-        if index.akshare_symbol:
-            return self._fetch_from_akshare(index, start_date, end_date)
+        # 按 SOURCE_DISPATCH 分发
+        method_name = self.SOURCE_DISPATCH.get(source)
+        if method_name is None:
+            logger.warning(f"未知数据源类型: {source}（{index.code}），可用: {list(self.SOURCE_DISPATCH.keys())}")
+            return pd.DataFrame()
 
-        logger.warning(f"{index.code} 未配置可用指数数据源")
-        return pd.DataFrame()
+        method = getattr(self, method_name, None)
+        if method is None:
+            logger.warning(f"未实现的分发方法: {method_name}（{index.code}）")
+            return pd.DataFrame()
+
+        return method(index, start_date, end_date)
 
     @rate_limit(min_interval=6.0, key="baostock_index")
     @retry_on_error(max_retries=3, retry_delay=5.0)
@@ -101,17 +127,25 @@ class MarketIndexFetcher:
             bs.logout()
 
     @rate_limit(min_interval=8.0, key="akshare_index")
-    @retry_on_error(max_retries=3, retry_delay=8.0)
+    @retry_on_error(max_retries=2, retry_delay=8.0)
     def _fetch_from_akshare(
         self,
         index: MarketIndexItem,
         start_date: str,
         end_date: str,
     ) -> pd.DataFrame:
-        """从 AKShare 获取指数 OHLCV，并尽力补成交额。"""
-        raw_df = ak.stock_zh_index_daily(symbol=index.akshare_symbol)
+        """从 AKShare 获取指数 OHLCV，并尽力补成交额。
+
+        部分中证行业指数在 Sina 源上可能无数据或格式不兼容，
+        失败时返回空 DataFrame 交由上游处理。
+        """
+        try:
+            raw_df = ak.stock_zh_index_daily(symbol=index.akshare_symbol)
+        except Exception as exc:
+            logger.warning(f"AKShare 指数 {index.code}({index.akshare_symbol}) 拉取异常: {exc}")
+            return pd.DataFrame()
         if raw_df is None or raw_df.empty:
-            logger.warning(f"AKShare 未返回 {index.code} 指数行情")
+            logger.warning(f"AKShare 未返回 {index.code}({index.akshare_symbol}) 指数行情")
             return pd.DataFrame()
 
         raw_df = raw_df.copy()
@@ -137,6 +171,126 @@ class MarketIndexFetcher:
 
         logger.info(
             f"AKShare 指数 {index.code} {start_date}~{end_date} 返回 {len(result)} 条"
+        )
+        return result[[
+            "index_code", "date", "open", "high", "low", "close", "volume", "amount"
+        ]]
+
+    @rate_limit(min_interval=8.0, key="akshare_us")
+    @retry_on_error(max_retries=3, retry_delay=8.0)
+    def _fetch_us_index_from_akshare(
+        self,
+        index: MarketIndexItem,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame:
+        """从 AKShare 获取美股指数日线行情（如 NDX、SPX）。
+
+        AKShare 的 stock_us_index_daily 返回美股指数历史日线全量数据，
+        包含 date/open/high/low/close/volume。
+        本方法拉取全量后在本地切片，幂等写入由 save_batch 的 ON CONFLICT 保证。
+
+        Args:
+            index: 指数配置项，akshare_symbol 填写 AKShare 接受的代码（如 "ndx"）
+            start_date: 起始日期 YYYY-MM-DD
+            end_date: 截止日期 YYYY-MM-DD
+
+        Returns:
+            columns = [index_code, date, open, high, low, close, volume, amount]
+        """
+        symbol = index.akshare_symbol
+        if not symbol:
+            logger.warning(f"美股指数 {index.code} 未配置 akshare_symbol")
+            return pd.DataFrame()
+
+        # 补齐新浪所需的 "." 前缀（如 ndx → .NDX）
+        sina_symbol = f".{symbol.upper()}" if not symbol.startswith(".") else symbol.upper()
+
+        try:
+            raw_df = ak.index_us_stock_sina(symbol=sina_symbol)
+        except Exception as exc:
+            logger.warning(f"AKShare 美股指数 {sina_symbol} 拉取失败: {exc}")
+            return pd.DataFrame()
+
+        if raw_df is None or raw_df.empty:
+            logger.warning(f"AKShare 未返回美股指数 {sina_symbol}")
+            return pd.DataFrame()
+
+        raw_df = raw_df.copy()
+        raw_df["date"] = pd.to_datetime(raw_df["date"]).dt.date
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        raw_df = raw_df[(raw_df["date"] >= start) & (raw_df["date"] <= end)]
+        if raw_df.empty:
+            return pd.DataFrame()
+
+        result = raw_df[["date", "open", "high", "low", "close", "volume", "amount"]].copy()
+        result["index_code"] = index.code
+
+        for col in ["open", "high", "low", "close", "volume", "amount"]:
+            result[col] = pd.to_numeric(result[col], errors="coerce")
+
+        logger.info(
+            f"AKShare 美股 {index.code} {start_date}~{end_date} 返回 {len(result)} 条"
+        )
+        return result[[
+            "index_code", "date", "open", "high", "low", "close", "volume", "amount"
+        ]]
+
+    @rate_limit(min_interval=8.0, key="akshare_hk")
+    @retry_on_error(max_retries=3, retry_delay=8.0)
+    def _fetch_hk_index_from_akshare(
+        self,
+        index: MarketIndexItem,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame:
+        """从 AKShare 获取港股指数日线行情（如恒生科技 HSTECH）。
+
+        使用新浪港股指数日线接口 stock_hk_index_daily_sina，
+        返回 date/open/high/low/close/volume。
+        幂等写入由 save_batch 的 ON CONFLICT 保证。
+
+        Args:
+            index: 指数配置项，akshare_symbol 填写新浪代码（如 "HSTECH"）
+            start_date: 起始日期 YYYY-MM-DD
+            end_date: 截止日期 YYYY-MM-DD
+
+        Returns:
+            columns = [index_code, date, open, high, low, close, volume, amount]
+        """
+        symbol = index.akshare_symbol
+        if not symbol:
+            logger.warning(f"港股指数 {index.code} 未配置 akshare_symbol")
+            return pd.DataFrame()
+
+        try:
+            raw_df = ak.stock_hk_index_daily_sina(symbol=symbol)
+        except Exception as exc:
+            logger.warning(f"AKShare 港股指数 {symbol} 拉取失败: {exc}")
+            return pd.DataFrame()
+
+        if raw_df is None or raw_df.empty:
+            logger.warning(f"AKShare 未返回港股指数 {symbol}")
+            return pd.DataFrame()
+
+        raw_df = raw_df.copy()
+        raw_df["date"] = pd.to_datetime(raw_df["date"]).dt.date
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        raw_df = raw_df[(raw_df["date"] >= start) & (raw_df["date"] <= end)]
+        if raw_df.empty:
+            return pd.DataFrame()
+
+        result = raw_df[["date", "open", "high", "low", "close", "volume"]].copy()
+        result["index_code"] = index.code
+        result["amount"] = None
+
+        for col in ["open", "high", "low", "close", "volume"]:
+            result[col] = pd.to_numeric(result[col], errors="coerce")
+
+        logger.info(
+            f"AKShare 港股 {index.code} {start_date}~{end_date} 返回 {len(result)} 条"
         )
         return result[[
             "index_code", "date", "open", "high", "low", "close", "volume", "amount"

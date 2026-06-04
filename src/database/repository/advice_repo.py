@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.database.connection import get_session
@@ -68,5 +69,41 @@ def find_by_date(date: date) -> list[OperationAdvice]:
             .all()
         )
         return [r.to_model() for r in results]
+    finally:
+        session.close()
+
+
+def count_by_codes_between(codes: list[str], start: date, end: date) -> int:
+    """统计指定 ETF 列表在日期范围内的操作建议数量。"""
+    if not codes:
+        return 0
+    session = get_session()
+    try:
+        return (
+            session.query(func.count())
+            .filter(OperationAdviceOrm.code.in_(codes))
+            .filter(OperationAdviceOrm.date >= start)
+            .filter(OperationAdviceOrm.date <= end)
+            .scalar()
+        )
+    finally:
+        session.close()
+
+
+def delete_by_codes_between(codes: list[str], start: date, end: date) -> int:
+    """删除指定 ETF 列表在日期范围内的操作建议，返回删除行数。"""
+    if not codes:
+        return 0
+    session = get_session()
+    try:
+        deleted = (
+            session.query(OperationAdviceOrm)
+            .filter(OperationAdviceOrm.code.in_(codes))
+            .filter(OperationAdviceOrm.date >= start)
+            .filter(OperationAdviceOrm.date <= end)
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+        return int(deleted or 0)
     finally:
         session.close()

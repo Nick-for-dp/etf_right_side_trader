@@ -19,7 +19,7 @@ class MultiIndicatorScoring(BaseStrategy):
     def __init__(self, weights: dict, thresholds: dict):
         self.weights = weights
         self.thresholds = thresholds
-        self.version = "2.0"
+        self.version = "2.3"
 
     # ── 子信号计算 ──
 
@@ -40,8 +40,10 @@ class MultiIndicatorScoring(BaseStrategy):
         return (dev.clip(-1, 1) * decay).clip(-1, 1)
 
     @staticmethod
-    def _calc_s_bb(pos_in_band: pd.Series) -> pd.Series:
-        return ((pos_in_band - 0.5) * 2).clip(-1, 1)
+    def _calc_s_bb(pos_in_band: pd.Series, bb_width_pct: pd.Series) -> pd.Series:
+        base = ((pos_in_band - 0.5) * 2).clip(-1, 1)
+        width_factor = (bb_width_pct / 0.05).clip(0.3, 1.0)
+        return (base * width_factor).clip(-1, 1)
 
     # ── 主入口 ──
 
@@ -71,7 +73,8 @@ class MultiIndicatorScoring(BaseStrategy):
         df = df.sort_values(["code", "date"]).reset_index(drop=True)
 
         required = ["ma20", "ma60", "close", "dif", "dea", "rsi",
-                    "bb_upper", "bb_lower", "vol_ratio"]
+                    "bb_upper", "bb_lower", "bb_mid", "bb_width",
+                    "adx14", "vol_ratio"]
         nan_mask = df[required].isna().any(axis=1)
         valid_df = df.loc[nan_mask == False].copy()
         nan_df = df[nan_mask]
@@ -97,7 +100,8 @@ class MultiIndicatorScoring(BaseStrategy):
                 s_trend = self._calc_s_trend(spread, position)
                 s_macd = self._calc_s_macd(dif_norm, macd_hist_norm)
                 s_rsi = self._calc_s_rsi(code_df["rsi"])
-                s_bb = self._calc_s_bb(pos_in_band)
+                bb_width_pct = code_df["bb_width"]
+                s_bb = self._calc_s_bb(pos_in_band, bb_width_pct)
 
                 # ── 第三步：加权求和得到原始评分 ──
                 raw_score = (
@@ -107,12 +111,17 @@ class MultiIndicatorScoring(BaseStrategy):
                     + s_bb * self.weights["bb"]
                 )
 
-                # ── 第四步：成交量乘数调整（只衰减不放大，右侧交易不追量）──
-                vol_mult = code_df["vol_ratio"].clip(lower=0.85, upper=1.0) ** 0.3
-                vol_mult = vol_mult.clip(0.85, 1.0)
-                score = raw_score * vol_mult * 100
+                # ── 第四步：成交量乘数调整 ──
+                vol_mult = code_df["vol_ratio"].clip(lower=0.6, upper=1.15) ** 0.3
+                # ── 第五步：ADX 趋势强度乘数 ──
+                adx = code_df["adx14"]
+                adx_mult = np.where(
+                    adx < 20, 0.5,
+                    np.where(adx > 25, 1.0, 0.75)
+                )
+                score = raw_score * vol_mult * adx_mult * 100
 
-                # ── 第五步：评分阈值 + 子信号一致性双重条件映射为 BUY / SELL / HOLD ──
+                # ── 第六步：评分阈值 + 子信号一致性双重条件映射为 BUY / SELL / HOLD ──
                 # 右侧交易核心原则：单一指标不构成入场理由，至少两个维度同时确认
                 signal = pd.Series("HOLD", index=code_df.index)
 
@@ -130,14 +139,17 @@ class MultiIndicatorScoring(BaseStrategy):
                 consensus_sell = neg_count >= 2
                 signal[score_pass_sell & consensus_sell] = "SELL"
 
-                # ── 第六步：组装输出（signal_meta 存子信号分解值，便于调试和回测）──
+                # ── 第七步：组装输出（signal_meta 存子信号分解值，便于调试和回测）──
                 for i in code_df.index:
                     meta = {
                         "s_trend": round(float(s_trend[i]), 6),
                         "s_macd": round(float(s_macd[i]), 6),
                         "s_rsi": round(float(s_rsi[i]), 6),
                         "s_bb": round(float(s_bb[i]), 6),
+                        "bb_width_pct": round(float(bb_width_pct[i]), 6),
                         "vol_mult": round(float(vol_mult[i]), 4),
+                        "adx_mult": round(float(adx_mult[i]), 4),
+                        "adx": round(float(adx[i]), 4),
                         "raw_score": round(float(raw_score[i]), 6),
                         "score": round(float(score[i]), 4),
                     }

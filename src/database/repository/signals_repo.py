@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.database.connection import get_session
@@ -42,6 +43,37 @@ def save(code: str, date: date, signal: str,
         session.close()
 
 
+def save_batch(records: list[Signal]) -> None:
+    """批量写入或替换策略信号。"""
+    if not records:
+        return
+    session = get_session()
+    try:
+        values = [
+            {
+                "code": r.code,
+                "date": r.date,
+                "signal": r.signal,
+                "strategy_version": r.strategy_version,
+                "signal_meta": r.signal_meta,
+            }
+            for r in records
+        ]
+        stmt = pg_insert(SignalOrm).values(values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["code", "date"],
+            set_={
+                "signal": stmt.excluded.signal,
+                "strategy_version": stmt.excluded.strategy_version,
+                "signal_meta": stmt.excluded.signal_meta,
+            },
+        )
+        session.execute(stmt)
+        session.commit()
+    finally:
+        session.close()
+
+
 def find_by_date(date: date) -> list[Signal]:
     """查询某日全部 ETF 的策略信号。
 
@@ -60,6 +92,42 @@ def find_by_date(date: date) -> list[Signal]:
             .all()
         )
         return [r.to_model() for r in results]
+    finally:
+        session.close()
+
+
+def count_by_codes_between(codes: list[str], start: date, end: date) -> int:
+    """统计指定 ETF 列表在日期范围内的信号数量。"""
+    if not codes:
+        return 0
+    session = get_session()
+    try:
+        return (
+            session.query(func.count())
+            .filter(SignalOrm.code.in_(codes))
+            .filter(SignalOrm.date >= start)
+            .filter(SignalOrm.date <= end)
+            .scalar()
+        )
+    finally:
+        session.close()
+
+
+def delete_by_codes_between(codes: list[str], start: date, end: date) -> int:
+    """删除指定 ETF 列表在日期范围内的信号，返回删除行数。"""
+    if not codes:
+        return 0
+    session = get_session()
+    try:
+        deleted = (
+            session.query(SignalOrm)
+            .filter(SignalOrm.code.in_(codes))
+            .filter(SignalOrm.date >= start)
+            .filter(SignalOrm.date <= end)
+            .delete(synchronize_session=False)
+        )
+        session.commit()
+        return int(deleted or 0)
     finally:
         session.close()
 

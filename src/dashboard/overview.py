@@ -35,6 +35,7 @@ def run():
     if not signals:
         st.warning(f"{t_str} 暂无信号数据，请先运行 python main.py run")
         return
+    advice_map = {a.code: a.advice for a in advice_repo.find_by_date(t)}
 
     rows = []
     for sig in signals:
@@ -55,24 +56,18 @@ def run():
         ma20 = ind_data.get("ma20")
         ma60 = ind_data.get("ma60")
         rsi = ind_data.get("rsi")
+        adx = ind_data.get("adx14")
 
         meta = sig.signal_meta or {}
         trend = meta.get("trend", "")
         score = meta.get("score")
-        # V2.0 展示评分，V1.x 展示趋势
+        # V2.3 展示评分，V1.x 展示趋势
         if score is not None:
             signal_display = f"{sig.signal} ({score:+.1f})"
         elif trend:
             signal_display = f"{sig.signal} ({trend})"
         else:
             signal_display = sig.signal
-
-        adv_list = advice_repo.find_by_date(t)
-        advice = ""
-        for a in adv_list:
-            if a.code == symbol:
-                advice = a.advice
-                break
 
         rows.append({
             "代码": symbol,
@@ -83,8 +78,9 @@ def run():
             "MA20": f"{ma20:.4f}" if ma20 else "-",
             "MA60": f"{ma60:.4f}" if ma60 else "-",
             "RSI": f"{rsi:.1f}" if rsi else "-",
+            "ADX": f"{adx:.1f}" if adx else "-",
             "信号": signal_display,
-            "建议": advice,
+            "建议": advice_map.get(symbol, ""),
         })
 
     if not rows:
@@ -101,7 +97,7 @@ def run():
         return ""
 
     styled = df.style.map(_highlight_signal, subset=["信号"])
-    st.dataframe(styled, width="stretch", hide_index=True)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
     st.caption(f"共 {len(rows)} 只 ETF，数据截止 {t_str}")
 
 

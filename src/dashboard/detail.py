@@ -71,6 +71,8 @@ def run():
     qdf["rsi"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("rsi"))
     # 成交量均线
     qdf["vol_ma20"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("vol_ma20"))
+    # v2.3：ADX 趋势强度
+    qdf["adx14"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("adx14"))
     # v2.1A：长期赔率因子
     qdf["odds_score"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("odds_score"))
     qdf["odds_state"] = qdf["date"].map(lambda d: ind_map.get(d, {}).get("odds_state"))
@@ -239,7 +241,7 @@ def run():
     fig.update_yaxes(title_text="RSI", row=4, col=1, range=[0, 100])
     fig.update_yaxes(title_text="赔率评分", row=5, col=1, range=[-100, 100])
 
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
     # ── 底部指标卡片 ──
     st.divider()
@@ -247,7 +249,7 @@ def run():
     latest_ind = ind_map.get(latest["date"], {})
     latest_sig = sig_map.get(latest["date"])
 
-    cols = st.columns(10)
+    cols = st.columns(11)
     cols[0].metric("最新收盘", f"{latest['close']:.4f}")
     cols[1].metric("MA20",
                    f"{latest_ind.get('ma20', '-'):.4f}" if latest_ind.get("ma20") else "-")
@@ -259,6 +261,10 @@ def run():
                    f"{latest_ind.get('vol_ratio', '-'):.2f}" if latest_ind.get("vol_ratio") else "-")
     cols[5].metric("区间最高", f"{qdf['high'].max():.4f}")
     cols[6].metric("区间最低", f"{qdf['low'].min():.4f}")
+    cols[7].metric(
+        "ADX",
+        f"{latest_ind.get('adx14', '-'):.1f}" if latest_ind.get("adx14") else "-"
+    )
 
     # ── v2.1A：赔率指标卡片 ──
     odds_score_val = latest_ind.get("odds_score")
@@ -266,9 +272,9 @@ def run():
     odds_blocked = latest_ind.get("odds_premium_blocked", False)
 
     if odds_score_val is not None:
-        cols[7].metric("赔率评分", f"{odds_score_val:+.1f}")
+        cols[8].metric("赔率评分", f"{odds_score_val:+.1f}")
     else:
-        cols[7].metric("赔率评分", "-")
+        cols[8].metric("赔率评分", "-")
 
     if odds_state_val:
         state_color = {
@@ -277,7 +283,7 @@ def run():
             "EXPENSIVE": "red",
             "INSUFFICIENT": "orange",
         }.get(odds_state_val, "gray")
-        cols[8].markdown(
+        cols[9].markdown(
             f"**赔率状态**<br><span style='color:{state_color};font-size:1.2em;font-weight:bold'>{odds_state_val}</span>",
             unsafe_allow_html=True,
         )
@@ -285,9 +291,9 @@ def run():
         if odds_blocked:
             st.warning(f"⚠ 溢价率过高，新开仓/加仓已被拦截")
     else:
-        cols[8].metric("赔率状态", "-")
+        cols[9].metric("赔率状态", "-")
 
-    # 信号卡片：V2.0 展示评分，V1.x 展示信号字符串
+    # 信号卡片：V2.3 展示评分，V1.x 展示信号字符串
     if latest_sig:
         meta = latest_sig.signal_meta or {}
         score = meta.get("score")
@@ -296,7 +302,7 @@ def run():
         else:
             trend = meta.get("trend", "")
             sig_display = f"{latest_sig.signal} ({trend})" if trend else latest_sig.signal
-        cols[9].metric("最新信号", sig_display)
+        cols[10].metric("最新信号", sig_display)
 
 
 if __name__ == "__main__":

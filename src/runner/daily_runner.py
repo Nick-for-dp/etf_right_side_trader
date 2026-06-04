@@ -17,7 +17,7 @@ from src.database import (
     trade_records_repo, market_regime_repo,
 )
 from src.fetcher import DailyFetcher, DataManager
-from src.indicators import MASystem, MACD, Bollinger, RSI, VolumeIndicator, LongTermOdds
+from src.indicators import ADX, MASystem, MACD, Bollinger, RSI, VolumeIndicator, LongTermOdds
 from src.models import OperationAdvice
 from src.risk import RiskController
 from src.service import (
@@ -87,6 +87,8 @@ def _step2_calc_indicators(config: AppConfig, t_minus_1: date) -> None:
     service.register(Bollinger(window=20, num_std=2.0))
     service.register(RSI(period=14))
     service.register(VolumeIndicator(window=20))
+    # v2.3：ADX 趋势强度
+    service.register(ADX(period=14))
     # v2.1A：长期赔率因子，用于 advisor 开仓门控
     service.register(LongTermOdds())
     for etf in config.etf_list:

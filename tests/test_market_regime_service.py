@@ -11,6 +11,10 @@ def _index(code: str) -> MarketIndexItem:
     return MarketIndexItem(code=code, name=code, weight=1.0)
 
 
+def _observe_index(code: str) -> MarketIndexItem:
+    return MarketIndexItem(code=code, name=code, weight=0.0)
+
+
 def _quotes(code: str, start: date, closes: list[float]) -> list[MarketIndexQuote]:
     rows = []
     for i, close in enumerate(closes):
@@ -50,7 +54,8 @@ def test_market_regime_hot_when_indices_rise_with_consensus(monkeypatch):
     })
     regime = service.calculate(target)
 
-    assert regime.state == MarketState.HOT.value
+    # HOT 状态因持续上涨被细分为 HOT_RISING
+    assert regime.state in {MarketState.HOT.value, MarketState.HOT_RISING.value}
     assert regime.score is not None and regime.score > 0
     assert regime.data["valid_indices"] == 4
 
@@ -79,3 +84,28 @@ def test_market_regime_unknown_when_not_enough_indices(monkeypatch):
     assert regime.state == MarketState.UNKNOWN.value
     assert regime.data["reason"] == "insufficient_index_data"
     assert regime.data["valid_indices"] == 2
+
+
+def test_zero_weight_indices_do_not_satisfy_min_indices(monkeypatch):
+    """观察指数有数据也不参与热度评分有效数量。"""
+    start = date(2026, 1, 1)
+    target = start + timedelta(days=79)
+    indices = [_index("score0"), _index("score1"), _observe_index("observe0"), _observe_index("observe1")]
+    close_series = [100 + i * 0.1 for i in range(80)]
+    data = {idx.code: _quotes(idx.code, start, close_series) for idx in indices}
+
+    monkeypatch.setattr(
+        "src.service.market_regime_service.market_index_quote_repo.find_by_code_in_range",
+        lambda code, _start, _end: data[code],
+    )
+
+    service = MarketRegimeService(indices, {
+        "lookback_days": 120,
+        "min_indices": 4,
+    })
+    regime = service.calculate(target)
+
+    assert regime.state == MarketState.UNKNOWN.value
+    assert regime.data["reason"] == "insufficient_index_data"
+    assert regime.data["valid_indices"] == 2
+    assert regime.data["observed_indices"] == 4

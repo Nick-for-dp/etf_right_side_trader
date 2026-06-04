@@ -13,6 +13,16 @@ def _make_df(code: str, rows: list[dict]) -> pd.DataFrame:
     """构造含全部指标列的测试 DataFrame。"""
     data = []
     for r in rows:
+        bb_u = r.get("bb_upper", float("nan"))
+        bb_l = r.get("bb_lower", float("nan"))
+        bb_mid_v = r.get("bb_mid",
+                         (bb_u + bb_l) / 2
+                         if not (pd.isna(bb_u) or pd.isna(bb_l))
+                         else float("nan"))
+        bb_w = r.get("bb_width",
+                     (bb_u - bb_l) / bb_mid_v
+                     if (not pd.isna(bb_mid_v) and bb_mid_v != 0)
+                     else float("nan"))
         row = {
             "code": code,
             "date": r.get("date", "2026-01-01"),
@@ -22,8 +32,11 @@ def _make_df(code: str, rows: list[dict]) -> pd.DataFrame:
             "dif": r.get("dif", float("nan")),
             "dea": r.get("dea", float("nan")),
             "rsi": r.get("rsi", float("nan")),
-            "bb_upper": r.get("bb_upper", float("nan")),
-            "bb_lower": r.get("bb_lower", float("nan")),
+            "bb_upper": bb_u,
+            "bb_lower": bb_l,
+            "bb_mid": bb_mid_v,
+            "bb_width": bb_w,
+            "adx14": r.get("adx14", 20.0),
             "vol_ratio": r.get("vol_ratio", 1.0),
         }
         data.append(row)
@@ -35,11 +48,12 @@ def _make_df(code: str, rows: list[dict]) -> pd.DataFrame:
 
 class TestSignalDirection:
     def test_strong_bull(self):
-        """强多头：均线多头 + RSI 65 + DIF 正值 + 触上轨 + 标准量。"""
+        """强多头：均线多头 + RSI 65 + DIF 正值 + 触上轨 + 标准量 + 强趋势。"""
         df = _make_df("588000", [{
             "date": "2026-01-15", "close": 1.25, "ma20": 1.22, "ma60": 1.18,
             "dif": 0.008, "dea": 0.005,
             "rsi": 65.0, "bb_upper": 1.28, "bb_lower": 1.16, "vol_ratio": 1.0,
+            "adx14": 28.0,
         }])
         strategy = MultiIndicatorScoring(weights=DEFAULT_WEIGHTS, thresholds=DEFAULT_THRESHOLDS)
         result = strategy.generate(df)
@@ -51,11 +65,12 @@ class TestSignalDirection:
         assert meta["s_macd"] > 0
 
     def test_strong_bear(self):
-        """强空头：均线空头 + RSI 35 + DIF 负值 + 触下轨。"""
+        """强空头：均线空头 + RSI 35 + DIF 负值 + 触下轨 + 强趋势。"""
         df = _make_df("588000", [{
             "date": "2026-01-15", "close": 0.95, "ma20": 0.98, "ma60": 1.02,
             "dif": -0.006, "dea": -0.004,
             "rsi": 35.0, "bb_upper": 1.04, "bb_lower": 0.92, "vol_ratio": 1.0,
+            "adx14": 28.0,
         }])
         strategy = MultiIndicatorScoring(weights=DEFAULT_WEIGHTS, thresholds=DEFAULT_THRESHOLDS)
         result = strategy.generate(df)
@@ -82,8 +97,8 @@ class TestSignalDirection:
 
 
 class TestVolumeMultiplier:
-    def test_volume_not_amplify(self):
-        """放量不放大信号强度（右侧交易不追量）。"""
+    def test_volume_amplifies(self):
+        """放量适度放大信号强度（成交量确认奖励）。"""
         base_row = {
             "date": "2026-01-15", "close": 1.25, "ma20": 1.22, "ma60": 1.18,
             "dif": 0.008, "dea": 0.005,
@@ -95,8 +110,11 @@ class TestVolumeMultiplier:
 
         score_normal = abs(strategy.generate(df_normal).iloc[0]["signal_meta"]["score"])
         score_spike = abs(strategy.generate(df_spike).iloc[0]["signal_meta"]["score"])
-        # vol_ratio > 1.0 被 clamp 到 1.0，放量不放大分数
-        assert score_spike == score_normal
+        # vol_ratio=2.0 → clip(0.6, 1.15) → 1.15 → 1.15^0.3 ≈ 1.043
+        # vol_ratio=1.0 → 1.0 → 1.0^0.3 = 1.0，放量确认奖励约 +4.3%
+        assert score_spike > score_normal
+        ratio = score_spike / score_normal
+        assert 1.03 < ratio < 1.06
 
     def test_volume_dampens(self):
         """缩量压低信号强度。"""
@@ -111,7 +129,10 @@ class TestVolumeMultiplier:
 
         score_normal = abs(strategy.generate(df_normal).iloc[0]["signal_meta"]["score"])
         score_low = abs(strategy.generate(df_low).iloc[0]["signal_meta"]["score"])
+        # vol_ratio=0.5 → clip(0.6, 1.15) → 0.6 → 0.6^0.3 ≈ 0.858，缩量衰减约 -14%
         assert score_low < score_normal
+        ratio = score_low / score_normal
+        assert 0.82 < ratio < 0.90
 
 
 # ── NaN 处理 ──
@@ -194,16 +215,18 @@ class TestOutputFormat:
         strategy = MultiIndicatorScoring(weights=DEFAULT_WEIGHTS, thresholds=DEFAULT_THRESHOLDS)
         result = strategy.generate(df)
         assert list(result.columns) == ["code", "date", "signal", "strategy_version", "signal_meta"]
-        assert result.iloc[0]["strategy_version"] == "2.0"
+        assert result.iloc[0]["strategy_version"] == "2.3"
 
     def test_signal_meta_keys(self):
         df = _make_df("588000", [{
             "date": "2026-01-15", "close": 1.25, "ma20": 1.22, "ma60": 1.18,
             "dif": 0.008, "dea": 0.005,
             "rsi": 65.0, "bb_upper": 1.28, "bb_lower": 1.16, "vol_ratio": 1.0,
+            "adx14": 28.0,
         }])
         strategy = MultiIndicatorScoring(weights=DEFAULT_WEIGHTS, thresholds=DEFAULT_THRESHOLDS)
         result = strategy.generate(df)
         meta = result.iloc[0]["signal_meta"]
-        for key in ("s_trend", "s_macd", "s_rsi", "s_bb", "vol_mult", "raw_score", "score"):
+        for key in ("s_trend", "s_macd", "s_rsi", "s_bb", "bb_width_pct",
+                    "vol_mult", "adx_mult", "adx", "raw_score", "score"):
             assert key in meta, f"signal_meta 缺少 {key}"

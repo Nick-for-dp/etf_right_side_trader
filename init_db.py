@@ -18,7 +18,7 @@ from src.database import (
 )
 from src.database.schema import Base
 from src.fetcher import DailyFetcher, DataManager, HistoryFetcher
-from src.indicators import MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
+from src.indicators import ADX, MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
 from src.models import MarketIndexQuote
 from src.runner.daily_runner import _indicators_to_dataframe
 from src.service import TradingCalendarService, IndicatorService, MarketRegimeService
@@ -86,6 +86,8 @@ def init_system(symbol: str | None = None,
     service.register(Bollinger(window=20, num_std=2.0))
     service.register(VolumeIndicator(window=20))
     service.register(RSI(period=14))
+    # v2.3：ADX 趋势强度
+    service.register(ADX(period=14))
     # v2.1A：长期赔率因子
     service.register(LongTermOdds())
     for etf in targets:
@@ -167,24 +169,69 @@ def init_market_data(start_date: date | None = None,
 
 
 def _backfill_market_indices(config, start_date: date, end_date: date) -> None:
-    """使用 Tushare 回填宽基指数历史日线，写入 market_index_quote。"""
+    """回填宽基指数 + 行业指数 + 美股指数历史日线。
+
+    优先使用 Tushare（覆盖 A 股宽基和 CSI 行业指数）。
+    Tushare 不覆盖或失败时，回退到 MarketIndexFetcher（按 index.source 分发）。
+    美股指数（akshare_us）不走 Tushare，直接走 AKShare。
+    """
     if not config.market_indices:
-        logger.info("未配置 market.indices，跳过宽基指数历史回填")
+        logger.info("未配置 market.indices，跳过指数历史回填")
         return
+
+    from src.fetcher.market_index_fetcher import MarketIndexFetcher
 
     start_fmt = start_date.strftime("%Y%m%d")
     end_fmt = end_date.strftime("%Y%m%d")
-    fetcher = HistoryFetcher()
+    mif = MarketIndexFetcher()
 
-    logger.info(f"回填 {start_date} ~ {end_date} 宽基指数历史行情...")
+    # 预创建 HistoryFetcher（Tushare 可能 token 无效，捕获异常回退）
+    tushare_fetcher = None
+    try:
+        tushare_fetcher = HistoryFetcher()
+    except ValueError as e:
+        logger.warning(f"Tushare 初始化失败，将全部走配置源回退: {e}")
+
+    logger.info(f"回填 {start_date} ~ {end_date} 指数历史行情...")
     for index in config.market_indices:
-        df = fetcher.get_index_history_from_tushare(index.code, start_fmt, end_fmt)
-        if df is None or df.empty:
-            logger.warning(f"指数历史: {index.code} 无数据，跳过")
+        # 美股指数：不走 Tushare，直接走 AKShare
+        if index.source == "akshare_us":
+            df = mif.fetch_daily(index, start_date.isoformat(), end_date.isoformat())
+            if df.empty:
+                logger.warning(f"指数历史: {index.code}(美股) 无数据，跳过")
+                continue
+            records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
+            market_index_quote_repo.save_batch(records)
+            logger.info(f"指数历史: {index.code}(美股) 写入 {len(records)} 条")
             continue
-        records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
-        market_index_quote_repo.save_batch(records)
-        logger.info(f"指数历史: {index.code} 写入/更新 {len(records)} 条")
+
+        # 优先 Tushare
+        tushare_ok = False
+        if tushare_fetcher is not None:
+            try:
+                df = tushare_fetcher.get_index_history_from_tushare(
+                    index.code, start_fmt, end_fmt,
+                    tushare_code=index.tushare_code,
+                )
+                if df is not None and not df.empty:
+                    records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
+                    market_index_quote_repo.save_batch(records)
+                    logger.info(f"指数历史: {index.code}(Tushare) 写入 {len(records)} 条")
+                    tushare_ok = True
+                else:
+                    logger.warning(f"指数历史: {index.code} Tushare 无数据")
+            except Exception as exc:
+                logger.warning(f"指数历史: {index.code} Tushare 异常: {exc}")
+
+        # Tushare 失败或不可用 → 回退到配置源
+        if not tushare_ok:
+            df = mif.fetch_daily(index, start_date.isoformat(), end_date.isoformat())
+            if df.empty:
+                logger.warning(f"指数历史: {index.code}(回退) 无数据，跳过")
+                continue
+            records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
+            market_index_quote_repo.save_batch(records)
+            logger.info(f"指数历史: {index.code}(回退) 写入 {len(records)} 条")
 
 
 def _calculate_market_regime_history(config, calendar: TradingCalendarService,

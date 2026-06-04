@@ -1,3 +1,4 @@
+from .adx import ADX
 from .base import BaseIndicator
 from .bollinger import Bollinger
 from .long_term_odds import LongTermOdds
@@ -7,6 +8,7 @@ from .rsi import RSI
 from .volume import VolumeIndicator
 
 __all__ = [
+    "ADX",
     "BaseIndicator",
     "Bollinger",
     "LongTermOdds",

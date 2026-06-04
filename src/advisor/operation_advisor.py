@@ -1,6 +1,6 @@
 """操作建议生成器：信号 × 持仓 × 门控 → 建议。
 
-v2.1A：新增长期赔率门控，EXPENSIVE 或高溢价时拦截买入，不影响卖出。
+v2.4 gate-lite：仅高溢价和极端市场下行状态硬拦截买入类建议。
 """
 
 from datetime import date
@@ -19,10 +19,16 @@ _ADVICE_MAP = {
     (True,  SignalType.SELL): AdviceAction.SELL,
 }
 
-# 赔率门控覆盖：长期赔率偏贵或高溢价时，禁止新开仓和加仓
-_ODDS_OVERRIDE = {
+# 买入类建议被门控时的降级动作。
+_BUY_OVERRIDE = {
     AdviceAction.OPEN: AdviceAction.WATCH,
     AdviceAction.ADD: AdviceAction.HOLD,
+}
+
+_MARKET_BLOCK_STATES = {
+    MarketState.HOT_FALLING.value,
+    MarketState.BEAR_TREND.value,
+    MarketState.PANIC.value,
 }
 
 
@@ -36,7 +42,7 @@ def generate_advice(positions: list[dict],
                     add_cooldown_days: int = 0) -> list[dict]:
     """交叉持仓、信号与赔率门控，返回操作建议列表。
 
-    优先级：风控 > 赔率门控 > 市场热度门控 > 加仓冷却 > 技术信号
+    优先级：风控 > 高溢价门控 > 极端市场门控 > 加仓冷却 > 技术信号
 
     Args:
         positions: 持仓列表，每项含 id、code、cost、shares、entry_date
@@ -95,20 +101,19 @@ def generate_advice(positions: list[dict],
         advice = _ADVICE_MAP.get((has_pos, signal), AdviceAction.WATCH)
         signal_source = SignalSource.TREND
 
-        # ── 优先级 2：长期赔率门控（v2.1A） ──
-        # 仅拦截买入类操作（建仓/加仓），SELL 和 HOLD 不受影响
-        odds_state = odds.get("odds_state")
+        # ── 优先级 2：高溢价硬门控 ──
+        # gate-lite 不再因 EXPENSIVE 赔率状态硬拦截买入；只保留高溢价硬过滤。
         premium_blocked = odds.get("premium_blocked", False)
-        if advice in _ODDS_OVERRIDE:
-            if odds_state == "EXPENSIVE" or premium_blocked:
-                advice = _ODDS_OVERRIDE[advice]
+        if advice in _BUY_OVERRIDE and premium_blocked:
+            advice = _BUY_OVERRIDE[advice]
 
-        # ── 优先级 3：市场热度门控（v2.2）──
-        # HOT 避免追高，COLD 避免弱反弹；UNKNOWN 不拦截。
-        if advice in _ODDS_OVERRIDE:
+        # ── 优先级 3：极端市场门控（gate-lite）──
+        # 只拦截 HOT_FALLING / BEAR_TREND / PANIC。
+        # HOT_RISING / RECOVERY / 旧 HOT/COLD 不硬拦，避免错杀趋势延续。
+        if advice in _BUY_OVERRIDE:
             market_state = market_regime.get("state")
-            if market_state in {MarketState.HOT.value, MarketState.COLD.value}:
-                advice = _ODDS_OVERRIDE[advice]
+            if market_state in _MARKET_BLOCK_STATES:
+                advice = _BUY_OVERRIDE[advice]
                 signal_source = SignalSource.MARKET_REGIME
 
         # ── 优先级 4：加仓冷却 ──

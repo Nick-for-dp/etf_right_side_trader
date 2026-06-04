@@ -1,4 +1,4 @@
-"""策略回测对比：V1.2 vs V2.0 同数据源双策略交易模拟与对比。
+"""策略回测对比：旧均线策略 vs 当前多指标策略。
 
 纯内存计算，不修改数据库。复用 profit_analysis_service 的 _simulate_trade_engine
 状态机 + advisor 的 generate_advice 查表，确保与生产环境交易模拟口径一致。
@@ -111,7 +111,8 @@ class BacktestComparison:
 
         Returns:
             (df, price_map, trading_days):
-            - df:            columns = [code, date, ma20, ma60, close, dif, dea, rsi, bb_upper, bb_lower, vol_ratio]
+            - df:            columns = [code, date, ma20, ma60, close, dif, dea, rsi,
+                              bb_mid, bb_upper, bb_lower, bb_width, adx14, vol_ratio]
             - price_map:     {code: {date_str: close}}，用于成交价查找
             - trading_days:  区间内排序后的交易日列表，用于权益曲线
         """
@@ -147,12 +148,21 @@ class BacktestComparison:
                     "close": close,
                 }
                 # 提取策略所需指标列
-                for col in ["ma20", "ma60", "dif", "dea", "rsi",
-                           "bb_upper", "bb_lower", "vol_ratio"]:
+                for col in [
+                    "ma20", "ma60", "dif", "dea", "rsi",
+                    "bb_mid", "bb_upper", "bb_lower", "bb_width",
+                    "adx14", "vol_ratio",
+                ]:
                     row[col] = ind_data.get(col)
                 rows.append(row)
 
-        df = pd.DataFrame(rows).sort_values(["code", "date"]).reset_index(drop=True)
+        if rows:
+            df = pd.DataFrame(rows).sort_values(["code", "date"]).reset_index(drop=True)
+        else:
+            df = pd.DataFrame(columns=[
+                "code", "date", "close", "ma20", "ma60", "dif", "dea", "rsi",
+                "bb_mid", "bb_upper", "bb_lower", "bb_width", "adx14", "vol_ratio",
+            ])
 
         # 交易日列表
         trading_days = self.calendar.get_trading_days_in_range(start, end)

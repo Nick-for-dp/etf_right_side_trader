@@ -31,6 +31,7 @@ def run():
         st.subheader("当前持仓")
 
         positions = positions_repo.find_all()
+        advice_map = {a.code: a.advice for a in advice_repo.find_by_date(t)}
 
         if not positions:
             st.info("暂无持仓，请在右侧添加")
@@ -41,13 +42,6 @@ def run():
                 close = q.close if q else None
                 pnl = (close - pos.cost) / pos.cost if close and pos.cost else None
 
-                adv_list = advice_repo.find_by_date(t)
-                advice = ""
-                for a in adv_list:
-                    if a.code == pos.code:
-                        advice = a.advice
-                        break
-
                 rows.append({
                     "ETF 代码": pos.code,
                     "名称": _SYMBOL_TO_NAME.get(pos.code, pos.code),
@@ -56,7 +50,7 @@ def run():
                     "盈亏%": f"{pnl * 100:+.2f}%" if pnl is not None else "-",
                     "股数": pos.shares,
                     "入场日": str(pos.entry_date),
-                    "建议": advice,
+                    "建议": advice_map.get(pos.code, ""),
                     "_id": pos.id,
                 })
 
@@ -72,7 +66,7 @@ def run():
                 return ""
 
             styled = df_mixed.drop(columns=["_id"]).style.map(_color_pnl, subset=["盈亏%"])
-            st.dataframe(styled, width="stretch", hide_index=True)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
 
             st.divider()
             st.caption("删除持仓")

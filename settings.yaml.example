@@ -20,6 +20,9 @@ etf_list:
   - symbol: "515700"
     name: "新能源车ETF平安"
     category: "sector"
+  - symbol: "512660"
+    name: "军工ETF国泰"
+    category: "sector"
 
 database:
   driver: "postgresql"
@@ -56,13 +59,13 @@ market:
       baostock_code: "sh.000001"
       akshare_symbol: "sh000001"
       source: "baostock"
-      weight: 1.0
+      weight: 1.5
     - code: "000300"
       name: "沪深300"
       baostock_code: "sh.000300"
       akshare_symbol: "sh000300"
       source: "baostock"
-      weight: 1.0
+      weight: 1.5
     - code: "000905"
       name: "中证500"
       baostock_code: "sh.000905"
@@ -87,14 +90,164 @@ market:
       akshare_symbol: "sh000688"
       source: "akshare"
       weight: 1.0
+
+    # ── 美股指数 ──
+    - code: "NDX"
+      name: "纳指100"
+      akshare_symbol: ".NDX"
+      source: "akshare_us"
+      weight: 0.0   # 仅用于分市场门控，不参与 A 股热度评分
+
+    # ── 港股指数 ──
+    # - code: "HZ5017"
+    #   name: "恒生科技指数"
+    #   akshare_symbol: "HSTECH"    # 新浪港股接口代码
+    #   tushare_code: "HZ5017.HI"   # Tushare 港股 ts_code
+    #   source: "akshare_hk"
+    #   weight: 0.0
+
+    # ── 中证行业指数（行业门控 + 组合风控行业暴露用）──
+    - code: "399967"
+      name: "中证军工"
+      akshare_symbol: "sz399967"
+      tushare_code: "399967.SZ"
+      source: "akshare"
+      weight: 0.0
+    # 以下指数在 Tushare 和 AKShare（新浪源）上均无数据，保留代码待后续寻找其他数据源。
+    # - code: "H30184"
+    #   name: "中证半导体"
+    #   akshare_symbol: "shH30184"
+    #   tushare_code: "H30184.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    # - code: "930997"
+    #   name: "中证新能源车"
+    #   akshare_symbol: "sh930997"
+    #   tushare_code: "930997.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    # - code: "931079"
+    #   name: "5G通信"
+    #   akshare_symbol: "sh931079"
+    #   tushare_code: "931079.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    - code: "980032"
+      name: "新能电池"
+      akshare_symbol: "sz980032"
+      tushare_code: "980032.SZ"
+      source: "akshare"
+      weight: 0.0
+    # - code: "H30199"
+    #   name: "中证电力"
+    #   akshare_symbol: "shH30199"
+    #   tushare_code: "H30199.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    # - code: "931994"
+    #   name: "电网设备主题"
+    #   akshare_symbol: "sh931994"
+    #   tushare_code: "931994.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    - code: "980022"
+      name: "CNIROBOT"
+      akshare_symbol: "sz980022"
+      tushare_code: "980022.SZ"
+      source: "akshare"
+      weight: 0.0
+    - code: "399971"
+      name: "中证传媒"
+      akshare_symbol: "sz399971"
+      tushare_code: "399971.SZ"
+      source: "akshare"
+      weight: 0.0
+    - code: "000949"
+      name: "中证农业"
+      akshare_symbol: "sh000949"
+      tushare_code: "000949.SH"
+      source: "akshare"
+      weight: 0.0
+    - code: "000813"
+      name: "细分化工"
+      akshare_symbol: "sh000813"
+      tushare_code: "000813.SH"
+      source: "akshare"
+      weight: 0.0
+    - code: "000819"
+      name: "有色金属"
+      akshare_symbol: "sh000819"
+      tushare_code: "000819.SH"
+      source: "akshare"
+      weight: 0.0
+    # - code: "H30198"
+    #   name: "中证油气"
+    #   akshare_symbol: "shH30198"
+    #   tushare_code: "H30198.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    - code: "399998"
+      name: "中证煤炭"
+      akshare_symbol: "sz399998"
+      tushare_code: "399998.SZ"
+      source: "akshare"
+      weight: 0.0
+    # - code: "930606"
+    #   name: "中证钢铁"
+    #   akshare_symbol: "sh930606"
+    #   tushare_code: "930606.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    - code: "399995"
+      name: "基建工程"
+      akshare_symbol: "sz399995"
+      tushare_code: "399995.SZ"
+      source: "akshare"
+      weight: 0.0
+    - code: "399989"
+      name: "中证医疗"
+      akshare_symbol: "sz399989"
+      tushare_code: "399989.SZ"
+      source: "akshare"
+      weight: 0.0
+    # - code: "930697"
+    #   name: "家用电器"
+    #   akshare_symbol: "sh930697"
+    #   tushare_code: "930697.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    # - code: "931152"
+    #   name: "CS创新药"
+    #   akshare_symbol: "sh931152"
+    #   tushare_code: "931152.CI"
+    #   source: "akshare"
+    #   weight: 0.0
+    - code: "399975"
+      name: "证券公司"
+      akshare_symbol: "sz399975"
+      tushare_code: "399975.SZ"
+      source: "akshare"
+      weight: 0.0
+    - code: "000069"
+      name: "消费80"
+      akshare_symbol: "sh000069"
+      tushare_code: "000069.SH"
+      source: "akshare"
+      weight: 0.0
+    # - code: "931151"
+    #   name: "光伏产业"
+    #   akshare_symbol: "sh931151"
+    #   tushare_code: "931151.CI"
+    #   source: "akshare"
+    #   weight: 0.0
   regime:
     enabled: true
     lookback_days: 180
     min_indices: 4
     hot_score: 0.55
     cold_score: -0.55
-    hot_ratio: 0.5
-    cold_ratio: 0.5
+    hot_ratio: 0.6
+    cold_ratio: 0.6
 
 data:
   # LongTermOdds 需要约 3 年交易窗口，1500 日历天提供足够 rolling 冗余。

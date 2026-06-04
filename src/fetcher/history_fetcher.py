@@ -35,12 +35,44 @@ class HistoryFetcher:
             self.pro._DataApi__http_url = tushare_url
             logger.info("Tushare API 端点已设置为自定义地址")
 
-    @rate_limit(min_interval=2.0, key="tushare")
+    @staticmethod
+    def _index_to_ts_code(symbol: str, tushare_code: str = "") -> str:
+        """将指数代码转换为 Tushare ts_code 格式。
+
+        支持中证行业指数（93xxxx/98xxxx/Hxxxxx → .CI）、
+        港股指数（HZxxxx → .HI）、
+        深证指数（399xxx → .SZ）和上证指数（其他 → .SH）。
+        显式传入 tushare_code 时直接返回。
+
+        Args:
+            symbol: 6 位指数代码或完整代码
+            tushare_code: 显式指定的 Tushare ts_code（为空时自动推导）
+
+        Returns:
+            完整的 Tushare ts_code，如 "000300.SH" / "399967.SZ" / "931151.CI"
+        """
+        if tushare_code:
+            return tushare_code
+
+        symbol = symbol.strip()
+        # 港股指数：HZxxxx → .HI
+        if symbol.startswith("HZ"):
+            return f"{symbol}.HI"
+        # CSI 中证指数：93xxx/98xxx/Hxxxx → .CI
+        if symbol.startswith(("93", "98", "99")) or symbol.startswith("H"):
+            return f"{symbol}.CI"
+        # 深证指数
+        if symbol.startswith("399"):
+            return f"{symbol}.SZ"
+        # 默认上证
+        return f"{symbol}.SH"
+
     def get_index_history_from_tushare(
         self,
         symbol: str,
         start_date: str,
-        end_date: str
+        end_date: str,
+        tushare_code: str = "",
     ) -> Optional[pd.DataFrame]:
         """从 Tushare 获取宽基指数历史日线行情。
 
@@ -51,6 +83,7 @@ class HistoryFetcher:
             symbol: 宽基指数代码（6 位数字，如 "000300"）
             start_date: 开始日期，格式 "YYYYMMDD"
             end_date: 结束日期，格式 "YYYYMMDD"
+            tushare_code: 显式指定 Tushare ts_code，为空时自动推导
 
         Returns:
             包含以下列的 DataFrame，无数据时返回 None：
@@ -68,12 +101,9 @@ class HistoryFetcher:
         """
         # ── step 1: 补全交易所后缀，转换为 Tushare ts_code 格式 ──
         symbol = symbol.strip()
-        if len(symbol) != 6:
+        if len(symbol) != 6 and not tushare_code:
             raise ValueError(f"指数代码长度必须为 6 位，输入代码 {symbol} 不符合要求。")
-        if symbol.startswith("399"):
-            ts_code = f"{symbol}.SZ"
-        else:
-            ts_code = f"{symbol}.SH"
+        ts_code = self._index_to_ts_code(symbol, tushare_code)
 
         # ── step 2: 拉取宽基指数日线行情 ──
         # Tushare index_daily 字段名：vol（成交量，手）、amount（成交额，千元）

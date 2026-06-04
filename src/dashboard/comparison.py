@@ -1,7 +1,7 @@
-"""策略对比：V1.2 vs V2.0 同数据源双策略回测对比。
+"""策略对比：旧均线策略 vs 当前多指标策略。
 
 基于 BacktestComparison 引擎，在同一份指标 + 行情数据上分别运行
-双均线交叉策略（v1.2）和多指标综合评分策略（v2.0），对比交易表现。
+双均线交叉策略（v1.1）和多指标综合评分策略（v2.3），对比交易表现。
 趋势跟踪策略在单边市场中多数交易未平仓属正常现象——资金曲线反映累计权益变化。
 """
 
@@ -61,7 +61,7 @@ def _per_etf_summary(trades: list, codes: list[str]) -> dict:
 def run():
     st.header("策略对比")
     st.caption(
-        "V1.2（双均线交叉 + MACD 确认）vs V2.0（多指标综合评分），"
+        "V1.1（双均线交叉 + MACD 确认）vs V2.3（多指标综合评分 + ADX），"
         "同一份指标 + 行情数据上对比。趋势跟踪策略在单边市场中大部分仓位未平仓属正常现象。"
     )
 
@@ -155,14 +155,14 @@ def run():
     ]
     for i, (label, v1_val, v2_val, fmt) in enumerate(closed_metrics):
         cols_v1[i].metric(
-            f"V1.2 {label}", fmt.format(v1_val),
-            delta=f"V2: {fmt.format(v2_val)}" if v1_val != v2_val else None
+            f"V1.1 {label}", fmt.format(v1_val),
+            delta=f"V2.3: {fmt.format(v2_val)}" if v1_val != v2_val else None
         )
     cols_v2 = st.columns(6)
     for i, (label, v1_val, v2_val, fmt) in enumerate(closed_metrics):
         delta_val = v2_val - v1_val if isinstance(v1_val, (int, float)) and isinstance(v2_val, (int, float)) else 0
         cols_v2[i].metric(
-            f"V2.0 {label}", fmt.format(v2_val),
+            f"V2.3 {label}", fmt.format(v2_val),
             delta=f"{delta_val:+.2%}" if abs(delta_val) > 0.0001 and label in ("累计已实现", "胜率") else None
         )
 
@@ -195,7 +195,7 @@ def run():
             if label in ("累计未实现", "最新权益"):
                 delta = f"{v2_val - v1_val:+.2%}"
         cols_eq2[i].metric(
-            f"V2.0 {label}", fmt.format(v2_val) if isinstance(v2_val, (int, float)) else str(v2_val),
+            f"V2.3 {label}", fmt.format(v2_val) if isinstance(v2_val, (int, float)) else str(v2_val),
             delta=delta
         )
 
@@ -221,12 +221,12 @@ def run():
         if not v1_eq.empty:
             fig_eq.add_trace(go.Scatter(
                 x=v1_eq["date"], y=v1_eq["equity"], mode="lines",
-                line=dict(color="#1f77b4", width=2), name="V1.2",
+                line=dict(color="#1f77b4", width=2), name="V1.1",
             ))
         if not v2_eq.empty:
             fig_eq.add_trace(go.Scatter(
                 x=v2_eq["date"], y=v2_eq["equity"], mode="lines",
-                line=dict(color="#ff7f0e", width=2), name="V2.0",
+                line=dict(color="#ff7f0e", width=2), name="V2.3",
             ))
 
         fig_eq.update_layout(
@@ -237,7 +237,7 @@ def run():
         )
         fig_eq.update_xaxes(title_text="日期")
         fig_eq.update_yaxes(title_text="权益")
-        st.plotly_chart(fig_eq, width="stretch")
+        st.plotly_chart(fig_eq, use_container_width=True)
     else:
         st.info("无足够数据绘制资金曲线")
 
@@ -261,14 +261,14 @@ def run():
         etf_rows.append({
             "代码": code,
             "名称": name,
-            "V1.2 已平仓": v1e.get("closed_count", 0),
-            "V1.2 持仓中": v1e.get("open_count", 0),
-            "V1.2 累计已实现": f"{v1e.get('cum_pnl', 0):+.2%}",
-            "V1.2 未实现": f"{v1e.get('unrealized', 0):+.2%}",
-            "V2.0 已平仓": v2e.get("closed_count", 0),
-            "V2.0 持仓中": v2e.get("open_count", 0),
-            "V2.0 累计已实现": f"{v2e.get('cum_pnl', 0):+.2%}",
-            "V2.0 未实现": f"{v2e.get('unrealized', 0):+.2%}",
+            "V1.1 已平仓": v1e.get("closed_count", 0),
+            "V1.1 持仓中": v1e.get("open_count", 0),
+            "V1.1 累计已实现": f"{v1e.get('cum_pnl', 0):+.2%}",
+            "V1.1 未实现": f"{v1e.get('unrealized', 0):+.2%}",
+            "V2.3 已平仓": v2e.get("closed_count", 0),
+            "V2.3 持仓中": v2e.get("open_count", 0),
+            "V2.3 累计已实现": f"{v2e.get('cum_pnl', 0):+.2%}",
+            "V2.3 未实现": f"{v2e.get('unrealized', 0):+.2%}",
             "总差异": f"{delta_total:+.2%}",
             "_delta": delta_total,
         })
@@ -288,7 +288,7 @@ def run():
 
     display_df = etf_df.drop(columns=["_delta"])
     styled = display_df.style.map(_highlight_delta, subset=["总差异"])
-    st.dataframe(styled, width="stretch", hide_index=True)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
 
     st.divider()
 
@@ -299,7 +299,7 @@ def run():
     st.subheader("已平仓交易分布")
 
     scatter_data: list[dict] = []
-    for ver, trades in [("V1.2", v1_data["trades"]), ("V2.0", v2_data["trades"])]:
+    for ver, trades in [("V1.1", v1_data["trades"]), ("V2.3", v2_data["trades"])]:
         for t in trades:
             if t.exit_date is not None and t.pnl_pct is not None:
                 scatter_data.append({
@@ -312,7 +312,7 @@ def run():
     if scatter_data:
         scatter_df = pd.DataFrame(scatter_data)
         fig_sc = go.Figure()
-        for ver, color in [("V1.2", "#1f77b4"), ("V2.0", "#ff7f0e")]:
+        for ver, color in [("V1.1", "#1f77b4"), ("V2.3", "#ff7f0e")]:
             subset = scatter_df[scatter_df["版本"] == ver]
             if subset.empty:
                 continue
@@ -329,7 +329,7 @@ def run():
             xaxis_title="持仓天数", yaxis_title="收益率（%）",
             hovermode="closest",
         )
-        st.plotly_chart(fig_sc, width="stretch")
+        st.plotly_chart(fig_sc, use_container_width=True)
     else:
         st.info("所选区间内无已平仓交易——趋势跟踪策略在单边市场中大部分仓位未平仓属正常现象。可参考上方资金曲线对比权益变化。")
 

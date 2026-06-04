@@ -30,6 +30,7 @@ class MarketIndexItem:
     name: str = ""
     baostock_code: str = ""
     akshare_symbol: str = ""
+    tushare_code: str = ""   # Tushare ts_code，为空时自动推导
     source: str = "auto"
     weight: float = 1.0
 
@@ -133,18 +134,20 @@ def _validate_market_indices(raw: list | None) -> list[MarketIndexItem]:
         if not code:
             raise ValueError(f"market.indices[{i}] 缺少必填字段 code")
         data_source = str(item.get("source", "auto"))
-        if data_source not in {"auto", "baostock", "akshare"}:
+        if data_source not in {"auto", "baostock", "akshare", "akshare_us", "akshare_hk"}:
             raise ValueError(
-                f"market.indices[{i}].source 无效: {data_source}，仅支持 auto/baostock/akshare"
+                f"market.indices[{i}].source 无效: {data_source}，"
+                f"仅支持 auto/baostock/akshare/akshare_us/akshare_hk"
             )
         weight = item.get("weight", 1.0)
-        if not isinstance(weight, (int, float)) or weight <= 0:
-            raise ValueError(f"market.indices[{i}].weight 需 > 0，实际: {weight}")
+        if not isinstance(weight, (int, float)) or weight < 0:
+            raise ValueError(f"market.indices[{i}].weight 需 >= 0，实际: {weight}")
         items.append(MarketIndexItem(
             code=code,
             name=item.get("name", ""),
             baostock_code=item.get("baostock_code", ""),
             akshare_symbol=item.get("akshare_symbol", ""),
+            tushare_code=item.get("tushare_code", ""),
             source=data_source,
             weight=float(weight),
         ))

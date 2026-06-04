@@ -83,8 +83,34 @@ def test_add_cooldown_does_not_block_new_position():
     assert advices[0]["signal_source"] == SignalSource.TREND.value
 
 
-def test_hot_market_blocks_open_advice():
-    """市场过热时，空仓 BUY 降级为观望。"""
+def test_hot_falling_market_blocks_open_advice():
+    """HOT_FALLING 时，空仓 BUY 降级为观望。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        market_regime={"state": "HOT_FALLING"},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.WATCH.value
+    assert advices[0]["signal_source"] == SignalSource.MARKET_REGIME.value
+
+
+def test_hot_rising_market_does_not_block_open_advice():
+    """gate-lite 下 HOT_RISING 不硬拦截空仓 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        market_regime={"state": "HOT_RISING"},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_legacy_hot_market_does_not_block_open_advice():
+    """gate-lite 下旧 HOT 状态不硬拦截空仓 BUY。"""
     advices = generate_advice(
         positions=[],
         signals=_signals(SignalType.BUY.value),
@@ -92,17 +118,30 @@ def test_hot_market_blocks_open_advice():
         market_regime={"state": "HOT"},
     )
 
-    assert advices[0]["advice"] == AdviceAction.WATCH.value
-    assert advices[0]["signal_source"] == SignalSource.MARKET_REGIME.value
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
 
 
-def test_cold_market_blocks_add_advice():
-    """市场过冷时，持仓 BUY 降级为继续持有。"""
+def test_legacy_cold_market_does_not_block_open_advice():
+    """gate-lite 下旧 COLD 状态不硬拦截空仓 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        market_regime={"state": "COLD"},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_bear_trend_market_blocks_add_advice():
+    """BEAR_TREND 时，持仓 BUY 降级为继续持有。"""
     advices = generate_advice(
         positions=[_position()],
         signals=_signals(SignalType.BUY.value),
         current_prices={"588000": 1.05},
-        market_regime={"state": "COLD"},
+        market_regime={"state": "BEAR_TREND"},
     )
 
     assert advices[0]["advice"] == AdviceAction.HOLD.value
@@ -122,13 +161,52 @@ def test_unknown_market_does_not_block_open_advice():
     assert advices[0]["signal_source"] == SignalSource.TREND.value
 
 
+def test_recovery_market_allows_open_advice():
+    """RECOVERY 时，空仓 BUY 允许建仓。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        market_regime={"state": "RECOVERY"},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_expensive_odds_does_not_block_open_advice():
+    """gate-lite 下 EXPENSIVE 不再硬拦截空仓 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        odds_map={"588000": {"odds_state": "EXPENSIVE", "premium_blocked": False}},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_premium_blocked_blocks_open_advice():
+    """高溢价继续硬拦截空仓 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        odds_map={"588000": {"odds_state": "FAIR", "premium_blocked": True}},
+    )
+
+    assert advices[0]["advice"] == AdviceAction.WATCH.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
 def test_market_regime_does_not_block_sell():
     """市场热度门控不影响 SELL。"""
     advices = generate_advice(
         positions=[_position()],
         signals=_signals(SignalType.SELL.value),
         current_prices={"588000": 0.95},
-        market_regime={"state": "HOT"},
+        market_regime={"state": "HOT_FALLING"},
     )
 
     assert advices[0]["advice"] == AdviceAction.SELL.value
@@ -142,7 +220,7 @@ def test_risk_signal_has_priority_over_market_regime():
         signals=_signals(SignalType.BUY.value),
         current_prices={"588000": 0.9},
         risk_signals={"588000": {"signal": SignalType.SELL.value, "source": SignalSource.STOP_LOSS.value}},
-        market_regime={"state": "HOT"},
+        market_regime={"state": "HOT_FALLING"},
     )
 
     assert advices[0]["advice"] == AdviceAction.SELL.value
