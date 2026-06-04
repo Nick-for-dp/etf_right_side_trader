@@ -13,8 +13,17 @@ wheels/
 .env
 settings.yaml
 
-# Project-specific
+# Project-specific runtime files
 data.db
 *.log
+.reasonix/
 .etf_cache/
+
+# Local development/planning docs
 temp_plan.md
+Agent.md
+AGENTS.md
+Archi.md
+PLAN.md
+CLAUDE.md
+docs/
