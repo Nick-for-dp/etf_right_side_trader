@@ -2,7 +2,8 @@
 
 from src.config import AppConfig
 from .base import BaseRiskRule, RiskResult
-from .stop_loss import StopLossRule
+from .max_holding import MaxHoldingDaysRule
+from .stop_loss import ProfileStopLossRule, StopLossRule
 from .trailing_stop import TrailingStopRule
 
 
@@ -22,6 +23,14 @@ class RiskController:
             if rtype == "stop_loss":
                 self._rules.append(StopLossRule(
                     threshold=params.get("threshold", -0.08),
+                ))
+            elif rtype == "profile_stop_loss":
+                self._rules.append(ProfileStopLossRule(
+                    default_profile=params.get("default_profile", "fixed_8"),
+                ))
+            elif rtype == "max_holding_days":
+                self._rules.append(MaxHoldingDaysRule(
+                    max_days=params.get("days", 90),
                 ))
             elif rtype == "trailing_stop":
                 self._rules.append(TrailingStopRule(

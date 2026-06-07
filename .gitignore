@@ -19,11 +19,18 @@ data.db
 .reasonix/
 .etf_cache/
 
+# Local backtest experiments and reports
+src/backtest/
+src/ds_backtest/
+tests/test_portfolio_backtest.py
+tests/test_ablation_report.py
+
 # Local development/planning docs
 temp_plan.md
 Agent.md
 AGENTS.md
-Archi.md
 PLAN.md
+EXPERIMENT.md
+Archi.md
 CLAUDE.md
 docs/

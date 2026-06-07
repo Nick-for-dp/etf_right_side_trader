@@ -13,7 +13,7 @@ from pydantic import BaseModel
 class Position(BaseModel):
     """单笔持仓记录。
 
-    cost:       持仓成本价（买入均价）
+    cost:       当前剩余持仓保本价；建仓/加仓按加权均价，减仓按卖出回款摊薄
     shares:     持有份额
     entry_date: 建仓日期
     """

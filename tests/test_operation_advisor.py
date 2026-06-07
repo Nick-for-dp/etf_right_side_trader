@@ -13,7 +13,7 @@ def _signals(signal: str, signal_date: str = "2026-05-10") -> pd.DataFrame:
         "code": "588000",
         "date": signal_date,
         "signal": signal,
-        "signal_meta": {},
+        "signal_meta": {"score": 65},
     }])
 
 
@@ -53,6 +53,58 @@ def test_add_advice_allowed_after_cooldown():
 
     assert advices[0]["advice"] == AdviceAction.ADD.value
     assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_add_budget_blocks_add_when_not_profitable():
+    """70/15/15 加仓规则要求浮盈后才允许加仓。"""
+    advices = generate_advice(
+        positions=[_position()],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 0.99},
+        entry_add_budget={
+            "entry_ratio": 0.7,
+            "add_steps": [{"ratio": 0.15, "require_profit": True, "min_score": 60}],
+        },
+    )
+
+    assert advices[0]["advice"] == AdviceAction.HOLD.value
+    assert advices[0]["signal_source"] == SignalSource.ADD_BUDGET.value
+
+
+def test_add_budget_blocks_add_when_score_too_low():
+    """70/15/15 加仓规则要求下一阶梯 score 达标。"""
+    advices = generate_advice(
+        positions=[_position()],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        entry_add_budget={
+            "entry_ratio": 0.7,
+            "add_steps": [{"ratio": 0.15, "require_profit": True, "min_score": 70}],
+        },
+    )
+
+    assert advices[0]["advice"] == AdviceAction.HOLD.value
+    assert advices[0]["signal_source"] == SignalSource.ADD_BUDGET.value
+
+
+def test_add_budget_blocks_add_after_all_steps_used():
+    """70/15/15 最多执行配置中的两次加仓。"""
+    advices = generate_advice(
+        positions=[_position()],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        add_counts={"588000": 2},
+        entry_add_budget={
+            "entry_ratio": 0.7,
+            "add_steps": [
+                {"ratio": 0.15, "require_profit": True, "min_score": 60},
+                {"ratio": 0.15, "require_profit": True, "min_score": 70},
+            ],
+        },
+    )
+
+    assert advices[0]["advice"] == AdviceAction.HOLD.value
+    assert advices[0]["signal_source"] == SignalSource.ADD_BUDGET.value
 
 
 def test_add_cooldown_does_not_block_sell():
@@ -197,6 +249,49 @@ def test_premium_blocked_blocks_open_advice():
     )
 
     assert advices[0]["advice"] == AdviceAction.WATCH.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_premium_gate_can_be_disabled_for_ablation():
+    """消融实验关闭高溢价门控后，premium_blocked 不再拦截 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        odds_map={"588000": {"odds_state": "FAIR", "premium_blocked": True}},
+        use_premium_gate=False,
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_market_gate_can_be_disabled_for_ablation():
+    """消融实验关闭市场门控后，HOT_FALLING 不再拦截 BUY。"""
+    advices = generate_advice(
+        positions=[],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        market_regime={"state": "HOT_FALLING"},
+        use_market_gate=False,
+    )
+
+    assert advices[0]["advice"] == AdviceAction.OPEN.value
+    assert advices[0]["signal_source"] == SignalSource.TREND.value
+
+
+def test_add_cooldown_can_be_disabled_for_ablation():
+    """消融实验关闭加仓冷却后，近期 BUY 仍允许加仓。"""
+    advices = generate_advice(
+        positions=[_position()],
+        signals=_signals(SignalType.BUY.value),
+        current_prices={"588000": 1.05},
+        last_buy_dates={"588000": date(2026, 5, 9)},
+        add_cooldown_days=5,
+        use_add_cooldown=False,
+    )
+
+    assert advices[0]["advice"] == AdviceAction.ADD.value
     assert advices[0]["signal_source"] == SignalSource.TREND.value
 
 

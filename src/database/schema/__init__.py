@@ -8,6 +8,7 @@ from .index_valuation import IndexValuationOrm
 from .trade_record import TradeRecordOrm
 from .market_index_quote import MarketIndexQuoteOrm
 from .market_regime import MarketRegimeOrm
+from .etf_mapping import EtfMappingOrm
 
 __all__ = [
     "Base",
@@ -20,4 +21,5 @@ __all__ = [
     "TradeRecordOrm",
     "MarketIndexQuoteOrm",
     "MarketRegimeOrm",
+    "EtfMappingOrm",
 ]

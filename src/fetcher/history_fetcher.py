@@ -138,6 +138,62 @@ class HistoryFetcher:
                    "volume", "amount"]]
 
     @rate_limit(min_interval=2.0, key="tushare")
+    def get_global_index_history_from_tushare(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        tushare_code: str = "",
+    ) -> Optional[pd.DataFrame]:
+        """从 Tushare 获取全球指数历史日线行情。
+
+        适用于恒生科技指数等不在 index_daily 中的数据。Tushare 的
+        index_global 接口返回 OHLC，部分指数 volume 为空，成交额不可用。
+
+        Args:
+            symbol: 系统内部指数代码，如 "HZ5017"
+            start_date: 开始日期，格式 "YYYYMMDD"
+            end_date: 结束日期，格式 "YYYYMMDD"
+            tushare_code: Tushare 全球指数代码，如 "HKTECH"
+
+        Returns:
+            包含 market_index_quote 可直接消费字段的 DataFrame，无数据时返回 None。
+        """
+        symbol = symbol.strip()
+        ts_code = (tushare_code or symbol).strip()
+        if not ts_code:
+            raise ValueError(f"全球指数 {symbol} 未配置 Tushare ts_code。")
+
+        price_df = self.pro.index_global(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if price_df is None or price_df.empty:
+            logger.info(f"全球指数 {ts_code} 在 {start_date} ~ {end_date} 之间无行情数据。")
+            return None
+
+        df = price_df.rename(columns={"trade_date": "date", "vol": "volume"})
+        df = df.sort_values("date").reset_index(drop=True)
+
+        for col in ["open", "high", "low", "close", "volume"]:
+            if col not in df.columns:
+                df[col] = None
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d").dt.date
+        df["index_code"] = symbol
+        df["amount"] = None
+
+        logger.info(
+            f"成功获取 {symbol}/{ts_code} {start_date} ~ {end_date} 的全球指数历史行情 "
+            f"（Tushare），共 {len(df)} 条记录。"
+        )
+
+        return df[["index_code", "date", "open", "high", "low", "close",
+                   "volume", "amount"]]
+
+    @rate_limit(min_interval=2.0, key="tushare")
     def get_etf_history_from_tushare(
         self,
         symbol: str,

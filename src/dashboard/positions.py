@@ -40,12 +40,12 @@ def run():
             for pos in positions:
                 q = quote_repo.find_latest_quote(pos.code)
                 close = q.close if q else None
-                pnl = (close - pos.cost) / pos.cost if close and pos.cost else None
+                pnl = (close - pos.cost) / pos.cost if close and pos.cost > 0 else None
 
                 rows.append({
                     "ETF 代码": pos.code,
                     "名称": _SYMBOL_TO_NAME.get(pos.code, pos.code),
-                    "成本": f"{pos.cost:.4f}",
+                    "保本价": f"{pos.cost:.4f}",
                     "现价": f"{close:.4f}" if close else "-",
                     "盈亏%": f"{pnl * 100:+.2f}%" if pnl is not None else "-",
                     "股数": pos.shares,
@@ -90,7 +90,7 @@ def run():
 
         existing = positions_repo.find_by_code(code)
         if existing:
-            st.caption(f"当前持仓：成本 {existing.cost:.4f}，{existing.shares} 股")
+            st.caption(f"当前持仓：保本价 {existing.cost:.4f}，{existing.shares} 股")
 
         cost = st.number_input("买入价", min_value=0.01, value=1.00, step=0.01, format="%.4f")
         shares = st.number_input("买入份额（手）", min_value=1, value=1000, step=100)
@@ -124,17 +124,15 @@ def run():
             pos_for_reduce = next((p for p in positions if p.code == reduce_code), None)
             if pos_for_reduce:
                 st.caption(
-                    f"当前持仓：成本 {pos_for_reduce.cost:.4f}，{pos_for_reduce.shares} 股"
+                    f"当前持仓：保本价 {pos_for_reduce.cost:.4f}，{pos_for_reduce.shares} 股"
                 )
-            sell_price = st.number_input(
-                "卖出价（仅供参考）", min_value=0.01, value=1.00, step=0.01, format="%.4f"
-            )
+            sell_price = st.number_input("卖出价", min_value=0.01, value=1.00, step=0.01, format="%.4f")
             sell_shares = st.number_input(
                 "卖出份额（手）", min_value=1, value=100, step=100,
                 max_value=pos_for_reduce.shares if pos_for_reduce else 1000,
             )
             if st.button("确认减仓", type="primary"):
-                result = PositionService.reduce(reduce_code, sell_shares)
+                result = PositionService.reduce(reduce_code, sell_shares, round(sell_price, 4))
                 trade_records_repo.save(TradeRecord(
                     code=reduce_code,
                     action=TradeAction.SELL if result is None else TradeAction.REDUCE,
@@ -145,7 +143,7 @@ def run():
                 if result is None:
                     st.success(f"已清仓 {reduce_code}")
                 else:
-                    st.success(f"已减仓 {reduce_code}，剩余 {result.shares} 股")
+                    st.success(f"已减仓 {reduce_code}，剩余 {result.shares} 股，保本价 {result.cost:.4f}")
                 st.rerun()
 
 

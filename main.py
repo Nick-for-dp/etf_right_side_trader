@@ -5,6 +5,7 @@
     python main.py init --symbol 588000          增量回填单只 ETF
     python main.py init --symbol 588000 --start 2024-01-01
     python main.py init-market --start 2022-01-01  初始化指数历史行情和市场热度
+    python main.py sync-etf-mapping             同步 settings.yaml 到 etf_mapping 表
     python main.py backfill-tushare              Tushare 历史 OHLCV 回填（临时，全量 ETF）
     python main.py backfill-tushare --symbol 588000 --start 20200101
     python main.py run                           执行一次每日流程（STEP 1-5）
@@ -12,6 +13,17 @@
     python main.py dashboard                     启动 Streamlit 仪表盘
     python main.py backtest-odds                  V2.0 vs V2.1A vs V2.2-market 回测对比
     python main.py backtest-odds --symbol 588000  单只 ETF 回测试算
+    python main.py backtest-ablation --start 2016-01-01
+    python main.py backtest-ablation --matrix preferred-cycle --start 2016-01-01
+    python main.py backtest-ablation --matrix add-rules --start 2016-01-01
+    python main.py backtest-ablation --matrix entry-add-budget --start 2016-01-01
+    python main.py backtest-ablation --matrix stop-loss-rules --start 2016-01-01
+    python main.py backtest-ablation --matrix stop-loss-by-segment --start 2016-01-01
+    python main.py backtest-ablation --matrix candidate-comparison
+    python main.py backtest-ablation --matrix reentry-rules
+    python main.py backtest-ablation --matrix trend-reentry-segments
+    python main.py backtest-ablation --matrix high-vol-reentry-cooldown
+    python main.py backtest-ablation --matrix high-vol-reentry-stop-price
     python main.py rebuild-signals --start 2024-06-01 --end 2026-06-03
 """
 
@@ -60,8 +72,8 @@ def main():
         help="单只 ETF 代码，不传则覆盖全部配置 ETF",
     )
     tushare_parser.add_argument(
-        "--start", type=str, default="20180101",
-        help="起始日期 YYYYMMDD，默认 20180101",
+        "--start", type=str, default="20160101",
+        help="起始日期 YYYYMMDD，默认 20160101",
     )
     tushare_parser.add_argument(
         "--end", type=str, default=None,
@@ -134,6 +146,58 @@ def main():
         "--cost", type=float, default=0.0005,
         help="佣金率，默认 0.0005（万分之五）",
     )
+    portfolio_parser.add_argument(
+        "--slippage", type=float, default=0.0001,
+        help="滑点率，默认 0.0001（万分之一）",
+    )
+
+    ablation_parser = sub.add_parser("backtest-ablation", help="因子消融实验回测")
+    ablation_parser.add_argument(
+        "--symbol", type=str, default=None,
+        help="单只 ETF 代码，不传则覆盖全部配置 ETF",
+    )
+    ablation_parser.add_argument(
+        "--start", type=str, default=None,
+        help="回测起始日期 YYYY-MM-DD，不传则按 lookback_days 推算",
+    )
+    ablation_parser.add_argument(
+        "--end", type=str, default=None,
+        help="回测结束日期 YYYY-MM-DD，不传则为昨天",
+    )
+    ablation_parser.add_argument(
+        "--capital", type=float, default=100000.0,
+        help="初始资金，默认 100000",
+    )
+    ablation_parser.add_argument(
+        "--cost", type=float, default=0.0005,
+        help="佣金率，默认 0.0005（万分之五）",
+    )
+    ablation_parser.add_argument(
+        "--slippage", type=float, default=0.0001,
+        help="滑点率，默认 0.0001（万分之一）",
+    )
+    ablation_parser.add_argument(
+        "--matrix", type=str, default="default",
+        choices=[
+            "default",
+            "preferred-cycle",
+            "add-rules",
+            "entry-add-budget",
+            "stop-loss-rules",
+            "stop-loss-by-segment",
+            "candidate-comparison",
+            "reentry-rules",
+            "trend-reentry-segments",
+            "high-vol-reentry-cooldown",
+            "high-vol-reentry-stop-price",
+        ],
+        help=(
+            "消融实验集：default、preferred-cycle、add-rules、"
+            "entry-add-budget、stop-loss-rules、stop-loss-by-segment "
+            "candidate-comparison、reentry-rules、trend-reentry-segments "
+            "high-vol-reentry-cooldown 或 high-vol-reentry-stop-price，默认 default"
+        ),
+    )
 
     rebuild_signals_parser = sub.add_parser(
         "rebuild-signals",
@@ -164,6 +228,7 @@ def main():
     sub.add_parser("schedule", help="启动定时调度")
     sub.add_parser("dashboard", help="启动 Streamlit 仪表盘")
     sub.add_parser("check-data", help="检查各数据域最新日期、缺失数和异常")
+    sub.add_parser("sync-etf-mapping", help="同步 settings.yaml ETF 映射到数据库")
 
     args = parser.parse_args()
 
@@ -250,8 +315,102 @@ def main():
             result = run_portfolio_backtest(
                 codes=codes, start=start_date, end=end_date,
                 capital=args.capital, cost_ratio=args.cost,
+                slippage=args.slippage,
             )
             print(format_portfolio_report(result))
+        finally:
+            dispose_engine()
+    elif args.command == "backtest-ablation":
+        from src.backtest.ablation_report import (
+            format_ablation_report,
+            format_candidate_comparison_report,
+            format_high_vol_reentry_cooldown_report,
+            format_high_vol_reentry_stop_price_report,
+            format_reentry_rules_report,
+            format_segmented_stop_loss_report,
+            format_trend_reentry_segments_report,
+            run_ablation_backtest,
+            run_candidate_comparison_backtest,
+            run_high_vol_reentry_cooldown_backtest,
+            run_high_vol_reentry_stop_price_backtest,
+            run_reentry_rules_backtest,
+            run_segmented_stop_loss_backtest,
+            run_trend_reentry_segments_backtest,
+        )
+        from src.config import load_config
+        from src.database import init_engine, dispose_engine
+        config = load_config()
+        init_engine(config.db_url)
+        try:
+            codes = [args.symbol] if args.symbol else None
+            start_date = date.fromisoformat(args.start) if args.start else None
+            end_date = date.fromisoformat(args.end) if args.end else None
+            if args.matrix == "stop-loss-by-segment":
+                result = run_segmented_stop_loss_backtest(
+                    codes=codes,
+                    start=start_date,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_segmented_stop_loss_report(result))
+            elif args.matrix == "candidate-comparison":
+                result = run_candidate_comparison_backtest(
+                    codes=codes,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_candidate_comparison_report(result))
+            elif args.matrix == "reentry-rules":
+                result = run_reentry_rules_backtest(
+                    codes=codes,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_reentry_rules_report(result))
+            elif args.matrix == "trend-reentry-segments":
+                result = run_trend_reentry_segments_backtest(
+                    codes=codes,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_trend_reentry_segments_report(result))
+            elif args.matrix == "high-vol-reentry-cooldown":
+                result = run_high_vol_reentry_cooldown_backtest(
+                    codes=codes,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_high_vol_reentry_cooldown_report(result))
+            elif args.matrix == "high-vol-reentry-stop-price":
+                result = run_high_vol_reentry_stop_price_backtest(
+                    codes=codes,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                )
+                print(format_high_vol_reentry_stop_price_report(result))
+            else:
+                result = run_ablation_backtest(
+                    codes=codes,
+                    start=start_date,
+                    end=end_date,
+                    capital=args.capital,
+                    cost_ratio=args.cost,
+                    slippage=args.slippage,
+                    matrix=args.matrix,
+                )
+                print(format_ablation_report(result))
         finally:
             dispose_engine()
     elif args.command == "rebuild-signals":
@@ -279,6 +438,22 @@ def main():
     elif args.command == "run":
         from src.runner import run_daily
         run_daily()
+    elif args.command == "sync-etf-mapping":
+        from src.config import load_config
+        from src.database import init_engine, dispose_engine
+        from src.database.schema import Base
+        from src.service.etf_mapping_service import (
+            EtfMappingService,
+            format_etf_mapping_sync_report,
+        )
+        config = load_config()
+        engine = init_engine(config.db_url)
+        try:
+            Base.metadata.create_all(engine)
+            result = EtfMappingService.sync_from_config(config)
+            print(format_etf_mapping_sync_report(result))
+        finally:
+            dispose_engine()
     elif args.command == "schedule":
         from src.scheduler import start_scheduler
         start_scheduler()

@@ -59,3 +59,19 @@ def find_latest_buy_date(code: str, as_of: date | None = None) -> date | None:
         return result[0] if result else None
     finally:
         session.close()
+
+
+def count_adds(code: str, as_of: date | None = None) -> int:
+    """Count ADD records for one ETF up to the optional date."""
+    session = get_session()
+    try:
+        q = (
+            session.query(TradeRecordOrm)
+            .filter(TradeRecordOrm.code == code)
+            .filter(TradeRecordOrm.action == TradeAction.ADD.value)
+        )
+        if as_of is not None:
+            q = q.filter(TradeRecordOrm.trade_date <= as_of)
+        return q.count()
+    finally:
+        session.close()

@@ -7,6 +7,7 @@ from . import index_valuation_repo
 from . import trade_records_repo
 from . import market_index_quote_repo
 from . import market_regime_repo
+from . import etf_mapping_repo
 
 __all__ = [
     "quote_repo",
@@ -18,4 +19,5 @@ __all__ = [
     "trade_records_repo",
     "market_index_quote_repo",
     "market_regime_repo",
+    "etf_mapping_repo",
 ]

@@ -11,6 +11,17 @@ from dotenv import load_dotenv
 
 _VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd", "multi_indicator_scoring"}
 _VALID_DB_DRIVERS = {"postgresql", "mysql"}
+_VALID_VOLATILITY_GROUPS = {"high_vol", "low_vol", "unknown_vol"}
+_VALID_STOP_LOSS_PROFILES = {
+    "none",
+    "fixed_6",
+    "fixed_8",
+    "fixed_10",
+    "fixed_12",
+    "atr_2_0",
+    "atr_2_5",
+    "atr_3_0",
+}
 
 
 @dataclass
@@ -19,7 +30,14 @@ class EtfItem:
 
     symbol: str
     name: str = ""
+    market: str = "A股"
+    tracking_index: str = "UNKNOWN"
+    sector: str = ""
+    theme: str = ""
     category: str = "broad"
+    regime_group: str = "A股"   # A股 / 美股 / 港股，用于分市场门控
+    volatility_group: str = "unknown_vol"
+    stop_loss_profile: str = "fixed_8"
 
 
 @dataclass
@@ -113,12 +131,31 @@ def _validate_etf_list(raw: list) -> list[EtfItem]:
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError(f"etf_list[{i}] 需为 dict")
-        if "symbol" not in item:
+        if not str(item.get("symbol", "")).strip():
             raise ValueError(f"etf_list[{i}] 缺少必填字段 symbol")
+        volatility_group = str(item.get("volatility_group", "unknown_vol")).strip()
+        if volatility_group not in _VALID_VOLATILITY_GROUPS:
+            raise ValueError(
+                f"etf_list[{i}].volatility_group 无效: {volatility_group}，"
+                f"仅支持 {_VALID_VOLATILITY_GROUPS}"
+            )
+        stop_loss_profile = str(item.get("stop_loss_profile", "fixed_8")).strip()
+        if stop_loss_profile not in _VALID_STOP_LOSS_PROFILES:
+            raise ValueError(
+                f"etf_list[{i}].stop_loss_profile 无效: {stop_loss_profile}，"
+                f"仅支持 {_VALID_STOP_LOSS_PROFILES}"
+            )
         items.append(EtfItem(
-            symbol=str(item["symbol"]),
-            name=item.get("name", ""),
-            category=item.get("category", "broad"),
+            symbol=str(item["symbol"]).strip(),
+            name=str(item.get("name", "")).strip(),
+            market=str(item.get("market", "A股")).strip(),
+            tracking_index=str(item.get("tracking_index", "UNKNOWN")).strip(),
+            sector=str(item.get("sector", "")).strip(),
+            theme=str(item.get("theme", "")).strip(),
+            category=str(item.get("category", "broad")).strip(),
+            regime_group=str(item.get("regime_group", "A股")).strip(),
+            volatility_group=volatility_group,
+            stop_loss_profile=stop_loss_profile,
         ))
     return items
 
@@ -134,10 +171,13 @@ def _validate_market_indices(raw: list | None) -> list[MarketIndexItem]:
         if not code:
             raise ValueError(f"market.indices[{i}] 缺少必填字段 code")
         data_source = str(item.get("source", "auto"))
-        if data_source not in {"auto", "baostock", "akshare", "akshare_us", "akshare_hk"}:
+        if data_source not in {
+            "auto", "baostock", "akshare", "akshare_us",
+            "akshare_hk", "tushare_global",
+        }:
             raise ValueError(
                 f"market.indices[{i}].source 无效: {data_source}，"
-                f"仅支持 auto/baostock/akshare/akshare_us/akshare_hk"
+                "仅支持 auto/baostock/akshare/akshare_us/akshare_hk/tushare_global"
             )
         weight = item.get("weight", 1.0)
         if not isinstance(weight, (int, float)) or weight < 0:
@@ -224,13 +264,48 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
             "weights": {k: weights[k] for k in required_keys},
             "thresholds": {"buy": buy, "sell": sell},
             "cooldown_days": params.get("cooldown_days", 5),
+            "entry_add_budget": params.get("entry_add_budget", {
+                "entry_ratio": 0.70,
+                "add_steps": [
+                    {"ratio": 0.15, "require_profit": True, "min_score": 60},
+                    {"ratio": 0.15, "require_profit": True, "min_score": 70},
+                ],
+            }),
         }
         cooldown_days = params["cooldown_days"]
         if not isinstance(cooldown_days, int) or cooldown_days < 0:
             raise ValueError(
                 f"strategy.params.cooldown_days 需为 >= 0 的整数，实际: {cooldown_days}"
             )
+        _validate_entry_add_budget(params["entry_add_budget"])
     return stype, params
+
+
+def _validate_entry_add_budget(raw: dict) -> None:
+    """Validate execution budget split metadata for production advice."""
+    if not isinstance(raw, dict):
+        raise ValueError("strategy.params.entry_add_budget 需为 dict")
+    entry_ratio = raw.get("entry_ratio")
+    if not isinstance(entry_ratio, (int, float)) or not 0 < entry_ratio <= 1:
+        raise ValueError(
+            f"strategy.params.entry_add_budget.entry_ratio 需在 (0, 1]，实际: {entry_ratio}"
+        )
+    add_steps = raw.get("add_steps", [])
+    if not isinstance(add_steps, list):
+        raise ValueError("strategy.params.entry_add_budget.add_steps 需为 list")
+    total = float(entry_ratio)
+    for i, step in enumerate(add_steps):
+        if not isinstance(step, dict):
+            raise ValueError(f"entry_add_budget.add_steps[{i}] 需为 dict")
+        ratio = step.get("ratio")
+        if not isinstance(ratio, (int, float)) or ratio <= 0:
+            raise ValueError(f"entry_add_budget.add_steps[{i}].ratio 需 > 0")
+        total += float(ratio)
+        min_score = step.get("min_score")
+        if min_score is not None and not isinstance(min_score, (int, float)):
+            raise ValueError(f"entry_add_budget.add_steps[{i}].min_score 需为数字")
+    if total > 1.000001:
+        raise ValueError(f"entry_add_budget 比例合计不能超过 1.0，实际: {total}")
 
 
 def _validate_risk_rules(raw: list) -> list[dict]:
@@ -247,6 +322,17 @@ def _validate_risk_rules(raw: list) -> list[dict]:
             threshold = rparams.get("threshold")
             if not isinstance(threshold, (int, float)) or threshold >= 0:
                 raise ValueError(f"stop_loss.threshold 需 < 0，实际: {threshold}")
+        if rtype == "profile_stop_loss":
+            default_profile = str(rparams.get("default_profile", "fixed_8")).strip()
+            if default_profile not in _VALID_STOP_LOSS_PROFILES:
+                raise ValueError(
+                    f"profile_stop_loss.default_profile 无效: {default_profile}，"
+                    f"仅支持 {_VALID_STOP_LOSS_PROFILES}"
+                )
+        if rtype == "max_holding_days":
+            days = rparams.get("days")
+            if not isinstance(days, int) or days <= 0:
+                raise ValueError(f"max_holding_days.days 需为 > 0 的整数，实际: {days}")
         if rtype == "trailing_stop":
             profit = rparams.get("profit_threshold")
             drawdown = rparams.get("drawdown_threshold")

@@ -1,4 +1,4 @@
-"""持仓管理业务逻辑：加仓均价重算、减仓。"""
+"""持仓管理业务逻辑：加仓均价重算、减仓保本价重算。"""
 
 from datetime import date
 
@@ -46,12 +46,13 @@ class PositionService:
         return positions_repo.save(pos)
 
     @staticmethod
-    def reduce(code: str, sell_shares: int) -> Position | None:
-        """减仓。卖出份额 >= 持仓时清仓返回 None，否则更新份额。
+    def reduce(code: str, sell_shares: int, sell_price: float) -> Position | None:
+        """减仓。卖出份额 >= 持仓时清仓返回 None，否则更新份额和保本价。
 
         Args:
             code: ETF 代码
             sell_shares: 本次卖出份额
+            sell_price: 本次卖出价
 
         Returns:
             更新后的 Position，清仓时返回 None
@@ -59,14 +60,21 @@ class PositionService:
         old = positions_repo.find_by_code(code)
         if old is None:
             raise ValueError(f"未找到 {code} 的持仓")
+        if sell_shares <= 0:
+            raise ValueError("卖出份额必须大于 0")
+        if sell_price <= 0:
+            raise ValueError("卖出价必须大于 0")
         if sell_shares >= old.shares:
             positions_repo.delete_by_id(old.id)
             return None
+
+        remaining_shares = old.shares - sell_shares
+        remaining_cost = old.cost * old.shares - sell_price * sell_shares
         pos = Position(
             id=old.id,
             code=code,
-            cost=old.cost,
-            shares=old.shares - sell_shares,
+            cost=round(remaining_cost / remaining_shares, 4),
+            shares=remaining_shares,
             entry_date=old.entry_date,
         )
         return positions_repo.save(pos)

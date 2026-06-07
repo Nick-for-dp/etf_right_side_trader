@@ -37,7 +37,9 @@ class SignalSource(StrEnum):
     TREND = "trend"
     STOP_LOSS = "stop_loss"
     TRAILING_STOP = "trailing_stop"
+    MAX_HOLDING = "max_holding"
     ADD_COOLDOWN = "add_cooldown"
+    ADD_BUDGET = "add_budget"
     MARKET_REGIME = "market_regime"
 
 

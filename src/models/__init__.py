@@ -8,6 +8,7 @@ from .index_valuation import IndexValuation
 from .trade_record import TradeRecord
 from .market_index_quote import MarketIndexQuote
 from .market_regime import MarketRegime
+from .etf_mapping import EtfMapping
 from .enums import AdviceAction, MarketState, SignalSource, SignalType, TradeAction
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "TradeRecord",
     "MarketIndexQuote",
     "MarketRegime",
+    "EtfMapping",
     "AdviceAction",
     "MarketState",
     "SignalSource",

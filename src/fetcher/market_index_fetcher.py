@@ -31,6 +31,7 @@ class MarketIndexFetcher:
         "akshare": "_fetch_from_akshare",
         "akshare_us": "_fetch_us_index_from_akshare",
         "akshare_hk": "_fetch_hk_index_from_akshare",
+        "tushare_global": "_fetch_global_index_from_tushare",
     }
 
     def fetch_daily(
@@ -295,6 +296,35 @@ class MarketIndexFetcher:
         return result[[
             "index_code", "date", "open", "high", "low", "close", "volume", "amount"
         ]]
+
+    @rate_limit(min_interval=2.0, key="tushare")
+    @retry_on_error(max_retries=2, retry_delay=5.0)
+    def _fetch_global_index_from_tushare(
+        self,
+        index: MarketIndexItem,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame:
+        """从 Tushare index_global 获取全球指数日线行情。"""
+        if not index.tushare_code:
+            logger.warning(f"全球指数 {index.code} 未配置 tushare_code")
+            return pd.DataFrame()
+
+        try:
+            from src.fetcher.history_fetcher import HistoryFetcher
+
+            fetcher = HistoryFetcher()
+            df = fetcher.get_global_index_history_from_tushare(
+                index.code,
+                start_date.replace("-", ""),
+                end_date.replace("-", ""),
+                tushare_code=index.tushare_code,
+            )
+        except Exception as exc:
+            logger.warning(f"Tushare 全球指数 {index.code}({index.tushare_code}) 拉取失败: {exc}")
+            return pd.DataFrame()
+
+        return df if df is not None else pd.DataFrame()
 
     @rate_limit(min_interval=8.0, key="eastmoney_index_amount")
     def _fetch_amount_from_eastmoney(

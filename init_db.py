@@ -18,10 +18,15 @@ from src.database import (
 )
 from src.database.schema import Base
 from src.fetcher import DailyFetcher, DataManager, HistoryFetcher
-from src.indicators import ADX, MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
+from src.indicators import ADX, ATR, MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
 from src.models import MarketIndexQuote
 from src.runner.daily_runner import _indicators_to_dataframe
-from src.service import TradingCalendarService, IndicatorService, MarketRegimeService
+from src.service import (
+    TradingCalendarService,
+    IndicatorService,
+    MarketRegimeService,
+    EtfMappingService,
+)
 from src.strategy import create_strategy
 from src.utils import get_logger
 
@@ -46,6 +51,12 @@ def init_system(symbol: str | None = None,
     logger.info("创建数据库表...")
     Base.metadata.create_all(engine)
     logger.info("表创建完成")
+    result = EtfMappingService.sync_from_config(config)
+    logger.info(
+        "ETF 映射同步完成: "
+        f"config={result.total_config} saved={result.saved} "
+        f"deleted_stale={result.deleted_stale}"
+    )
 
     calendar = TradingCalendarService()
     t_minus_1_str = calendar.get_previous_trading_day()
@@ -88,6 +99,7 @@ def init_system(symbol: str | None = None,
     service.register(RSI(period=14))
     # v2.3：ADX 趋势强度
     service.register(ADX(period=14))
+    service.register(ATR(period=20))
     # v2.1A：长期赔率因子
     service.register(LongTermOdds())
     for etf in targets:
@@ -152,6 +164,12 @@ def init_market_data(start_date: date | None = None,
     logger.info("创建数据库表...")
     Base.metadata.create_all(engine)
     logger.info("表创建完成")
+    result = EtfMappingService.sync_from_config(config)
+    logger.info(
+        "ETF 映射同步完成: "
+        f"config={result.total_config} saved={result.saved} "
+        f"deleted_stale={result.deleted_stale}"
+    )
 
     calendar = TradingCalendarService()
     if end_date is None:
@@ -194,6 +212,28 @@ def _backfill_market_indices(config, start_date: date, end_date: date) -> None:
 
     logger.info(f"回填 {start_date} ~ {end_date} 指数历史行情...")
     for index in config.market_indices:
+        # 全球指数：如恒生科技 HKTECH，走 Tushare index_global。
+        if index.source == "tushare_global":
+            if tushare_fetcher is None:
+                logger.warning(f"指数历史: {index.code}(全球指数) Tushare 不可用，跳过")
+                continue
+            try:
+                df = tushare_fetcher.get_global_index_history_from_tushare(
+                    index.code,
+                    start_fmt,
+                    end_fmt,
+                    tushare_code=index.tushare_code,
+                )
+                if df is None or df.empty:
+                    logger.warning(f"指数历史: {index.code}(全球指数) 无数据，跳过")
+                    continue
+                records = [MarketIndexQuote(**row) for _, row in df.iterrows()]
+                market_index_quote_repo.save_batch(records)
+                logger.info(f"指数历史: {index.code}(全球指数) 写入 {len(records)} 条")
+            except Exception as exc:
+                logger.warning(f"指数历史: {index.code}(全球指数) 异常: {exc}")
+            continue
+
         # 美股指数：不走 Tushare，直接走 AKShare
         if index.source == "akshare_us":
             df = mif.fetch_daily(index, start_date.isoformat(), end_date.isoformat())

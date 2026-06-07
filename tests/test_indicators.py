@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.indicators import Bollinger, VolumeIndicator, RSI
+from src.indicators import ATR, Bollinger, VolumeIndicator, RSI
 
 
 def _make_df(values: list[float], extra_col: dict | None = None) -> pd.DataFrame:
@@ -96,3 +96,35 @@ class TestRSI:
         df = _make_df([100.0] * 30)
         result = RSI().calculate(df)
         assert list(result.columns) == ["date", "rsi"]
+
+
+# ── ATR ──
+
+
+class TestATR:
+    def test_wilder_smoothing(self):
+        """ATR 使用 Wilder 平滑 alpha=1/period，而不是 ewm span 口径。"""
+        df = pd.DataFrame({
+            "date": [f"2026-01-{i+1:02d}" for i in range(4)],
+            "high": [10.0, 13.0, 15.0, 14.0],
+            "low": [9.0, 11.0, 12.0, 10.0],
+            "close": [9.5, 12.0, 13.0, 11.0],
+        })
+
+        result = ATR(period=3).calculate(df)
+
+        # TR = [1.0, 3.5, 3.0, 4.0]
+        # Wilder: atr[i] = atr[i-1] * 2/3 + tr[i] * 1/3
+        expected = [1.0, 1.8333333333, 2.2222222222, 2.8148148148]
+        assert result["atr20"].tolist() == pytest.approx(expected)
+        assert result["atr_pct"].iloc[-1] == pytest.approx(expected[-1] / 11.0)
+
+    def test_output_columns(self):
+        df = pd.DataFrame({
+            "date": ["2026-01-01", "2026-01-02"],
+            "high": [10.0, 11.0],
+            "low": [9.0, 9.5],
+            "close": [9.5, 10.5],
+        })
+        result = ATR(period=20).calculate(df)
+        assert list(result.columns) == ["date", "atr20", "atr_pct"]

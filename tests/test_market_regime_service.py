@@ -4,7 +4,11 @@ from datetime import date, timedelta
 
 from src.config.settings_reader import MarketIndexItem
 from src.models import MarketIndexQuote, MarketState
-from src.service.market_regime_service import MarketRegimeService
+from src.service.market_regime_service import (
+    MarketRegimeService,
+    build_per_code_market_regime,
+    compute_single_index_regime,
+)
 
 
 def _index(code: str) -> MarketIndexItem:
@@ -109,3 +113,66 @@ def test_zero_weight_indices_do_not_satisfy_min_indices(monkeypatch):
     assert regime.data["reason"] == "insufficient_index_data"
     assert regime.data["valid_indices"] == 2
     assert regime.data["observed_indices"] == 4
+
+
+def test_single_index_regime_reuses_full_market_scoring(monkeypatch):
+    """单指数 regime 应复用主 market_regime 评分和状态细分口径。"""
+    start = date(2026, 1, 1)
+    target = start + timedelta(days=79)
+    closes = [100 + i * 0.5 for i in range(80)]
+    data = {"NDX": _quotes("NDX", start, closes)}
+
+    monkeypatch.setattr(
+        "src.service.market_regime_service.market_index_quote_repo.find_by_code_in_range",
+        lambda code, _start, _end: data.get(code, []),
+    )
+
+    params = {
+        "lookback_days": 120,
+        "min_indices": 1,
+        "hot_score": 0.45,
+        "cold_score": -0.45,
+        "hot_ratio": 0.5,
+        "cold_ratio": 0.5,
+    }
+    service_regime = MarketRegimeService([_index("NDX")], params).calculate(target)
+    single_regime = compute_single_index_regime("NDX", target, params=params)
+
+    assert single_regime["state"] == service_regime.state
+    assert single_regime["score"] == service_regime.score
+    assert single_regime["data"]["valid_indices"] == 1
+
+
+def test_build_per_code_market_regime_uses_group_mapping(monkeypatch):
+    """美股走 NDX 独立 regime；港股走 HZ5017 独立 regime。"""
+    start = date(2026, 1, 1)
+    target = start + timedelta(days=79)
+    data = {
+        "NDX": _quotes("NDX", start, [100 + i * 0.5 for i in range(80)]),
+        "HZ5017": _quotes("HZ5017", start, [200 + i * 0.5 for i in range(80)]),
+    }
+
+    monkeypatch.setattr(
+        "src.service.market_regime_service.market_index_quote_repo.find_by_code_in_range",
+        lambda code, _start, _end: data.get(code, []),
+    )
+
+    base_regime = {"state": MarketState.BEAR_TREND.value, "score": -0.6}
+    result = build_per_code_market_regime(
+        {
+            "US_ETF": "美股",
+            "HK_ETF": "港股",
+            "CN_ETF": "A股",
+        },
+        target,
+        base_regime,
+        params={
+            "lookback_days": 120,
+            "hot_score": 0.45,
+            "cold_score": -0.45,
+        },
+    )
+
+    assert result["US_ETF"]["state"] != base_regime["state"]
+    assert result["HK_ETF"]["state"] != base_regime["state"]
+    assert result["CN_ETF"] == base_regime

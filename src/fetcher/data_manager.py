@@ -150,7 +150,7 @@ class DataManager:
     def backfill_tushare(
         self,
         symbol: str | None = None,
-        start_date: str = "20200101",
+        start_date: str = "20160101",
         end_date: str | None = None,
     ) -> None:
         """使用 Tushare 批量回填 ETF 历史 OHLCV（临时方案）。
@@ -163,7 +163,7 @@ class DataManager:
 
         Args:
             symbol: 单只 ETF 代码（6 位数字），None = 覆盖 settings.yaml 中全部 ETF
-            start_date: 起始日期 YYYYMMDD，默认 20180101（Tushare 数据最早约到 2018 年）
+            start_date: 起始日期 YYYYMMDD，默认 20160101（Tushare 数据最早约到 2016 年）
             end_date: 截止日期 YYYYMMDD，None = T-1 上一个交易日
         """
         from .history_fetcher import HistoryFetcher
