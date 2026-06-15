@@ -35,7 +35,7 @@ def run():
     if not signals:
         st.warning(f"{t_str} 暂无信号数据，请先运行 python main.py run")
         return
-    advice_map = {a.code: a.advice for a in advice_repo.find_by_date(t)}
+    advice_map = {a.code: a for a in advice_repo.find_by_date(t)}
 
     rows = []
     for sig in signals:
@@ -61,6 +61,7 @@ def run():
         meta = sig.signal_meta or {}
         trend = meta.get("trend", "")
         score = meta.get("score")
+        advice = advice_map.get(symbol)
         # V2.3 展示评分，V1.x 展示趋势
         if score is not None:
             signal_display = f"{sig.signal} ({score:+.1f})"
@@ -80,7 +81,17 @@ def run():
             "RSI": f"{rsi:.1f}" if rsi else "-",
             "ADX": f"{adx:.1f}" if adx else "-",
             "信号": signal_display,
-            "建议": advice_map.get(symbol, ""),
+            "建议": advice.advice if advice else "",
+            "本次预算": _format_ratio(advice.target_budget_ratio if advice else None),
+            "本次阶梯": (
+                f"第 {advice.entry_add_step} 次加仓"
+                if advice and advice.entry_add_step is not None else "-"
+            ),
+            "Score": f"{advice.score:+.1f}" if advice and advice.score is not None else "-",
+            "市场": advice.market_state if advice and advice.market_state else "-",
+            "来源": advice.signal_source if advice else "-",
+            "止损": advice.stop_loss_profile if advice and advice.stop_loss_profile else "-",
+            "拦截/原因": _advice_reason(advice),
         })
 
     if not rows:
@@ -99,6 +110,28 @@ def run():
     styled = df.style.map(_highlight_signal, subset=["信号"])
     st.dataframe(styled, use_container_width=True, hide_index=True)
     st.caption(f"共 {len(rows)} 只 ETF，数据截止 {t_str}")
+
+
+def _format_ratio(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value * 100:.0f}%"
+
+
+def _advice_reason(advice) -> str:
+    if advice is None:
+        return "-"
+    if advice.blocked_reason:
+        return advice.blocked_reason
+    meta = advice.advice_meta or {}
+    if meta.get("risk_reason"):
+        return meta["risk_reason"]
+    budget_plan = meta.get("budget_plan") or {}
+    if budget_plan.get("stage") == "entry":
+        return "建仓预算 70%" if advice.target_budget_ratio is not None else "-"
+    if budget_plan.get("stage") == "add":
+        return f"加仓预算 {_format_ratio(advice.target_budget_ratio)}"
+    return "-"
 
 
 if __name__ == "__main__":

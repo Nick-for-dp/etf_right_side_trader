@@ -13,7 +13,7 @@ from src.models import OperationAdvice
 def save_batch(records: list[OperationAdvice]) -> None:
     """批量写入操作建议。
 
-    ON CONFLICT DO NOTHING 策略，已存在的记录不会被覆盖。
+    ON CONFLICT DO UPDATE 策略，已存在的记录会刷新为最新建议。
 
     Args:
         records: 待写入的 OperationAdvice 列表，空列表时直接返回
@@ -27,7 +27,14 @@ def save_batch(records: list[OperationAdvice]) -> None:
             {c.name: getattr(orm, c.name) for c in OperationAdviceOrm.__table__.columns}
             for orm in orm_records
         ])
-        stmt = stmt.on_conflict_do_nothing()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["code", "date"],
+            set_={
+                c.name: getattr(stmt.excluded, c.name)
+                for c in OperationAdviceOrm.__table__.columns
+                if c.name not in ("code", "date")
+            },
+        )
         session.execute(stmt)
         session.commit()
     finally:

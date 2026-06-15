@@ -8,8 +8,9 @@ Example:
 
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OperationAdvice(BaseModel):
@@ -26,6 +27,14 @@ class OperationAdvice(BaseModel):
     cost: float | None = None
     pnl_pct: float | None = None
     signal_source: str = ""
+    target_position_ratio: float | None = None
+    target_budget_ratio: float | None = None
+    entry_add_step: int | None = None
+    score: float | None = None
+    market_state: str | None = None
+    stop_loss_profile: str | None = None
+    blocked_reason: str | None = None
+    advice_meta: dict[str, Any] = Field(default_factory=dict)
 
     def to_orm(self):
         """转换为 ORM 对象。"""
@@ -39,4 +48,18 @@ class OperationAdvice(BaseModel):
             signal=self.signal,
             advice=self.advice,
             signal_source=self.signal_source,
+            target_position_ratio=(
+                Decimal(str(self.target_position_ratio))
+                if self.target_position_ratio is not None else None
+            ),
+            target_budget_ratio=(
+                Decimal(str(self.target_budget_ratio))
+                if self.target_budget_ratio is not None else None
+            ),
+            entry_add_step=self.entry_add_step,
+            score=Decimal(str(self.score)) if self.score is not None else None,
+            market_state=self.market_state,
+            stop_loss_profile=self.stop_loss_profile,
+            blocked_reason=self.blocked_reason,
+            advice_meta=self.advice_meta,
         )

@@ -17,6 +17,7 @@ from src.database import (
     quote_repo,
 )
 from src.database.schema import Base
+from src.database.schema_maintenance import ensure_operation_advice_columns
 from src.fetcher import DailyFetcher, DataManager, HistoryFetcher
 from src.indicators import ADX, ATR, MASystem, MACD, Bollinger, VolumeIndicator, RSI, LongTermOdds
 from src.models import MarketIndexQuote
@@ -50,6 +51,7 @@ def init_system(symbol: str | None = None,
     # 1. 建表
     logger.info("创建数据库表...")
     Base.metadata.create_all(engine)
+    ensure_operation_advice_columns(engine)
     logger.info("表创建完成")
     result = EtfMappingService.sync_from_config(config)
     logger.info(
@@ -163,6 +165,7 @@ def init_market_data(start_date: date | None = None,
 
     logger.info("创建数据库表...")
     Base.metadata.create_all(engine)
+    ensure_operation_advice_columns(engine)
     logger.info("表创建完成")
     result = EtfMappingService.sync_from_config(config)
     logger.info(

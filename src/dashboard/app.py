@@ -13,6 +13,7 @@ import streamlit as st
 
 from src.config import load_config
 from src.database import init_engine
+from src.database.schema_maintenance import ensure_operation_advice_columns
 from src.service import TradingCalendarService
 
 
@@ -24,7 +25,8 @@ def main():
     )
 
     config = load_config()
-    init_engine(config.db_url)
+    engine = init_engine(config.db_url)
+    ensure_operation_advice_columns(engine)
 
     calendar = TradingCalendarService()
     latest_trading_day = calendar.get_previous_trading_day()

@@ -2,7 +2,7 @@
 
 ETF 右侧交易助手是一个面向 A 股和跨境 ETF 的趋势跟踪系统。它不预测行情，只在技术趋势确认后入场，在趋势走弱或风控触发时离场，并用高溢价和极端市场状态做买入类建议门控。
 
-当前生产基线：`baseline-v2.4`。已完成多指标评分、ADX 趋势强度过滤、ATR(20) 指标、长期赔率因子、ETF 映射表、分市场热度门控、70/15/15 阶梯建仓加仓、分市场/分波动止损、90 日最大持有、真实账户净值回测、归因分析、信号重算、Streamlit 仪表盘和持仓管理。
+当前生产基线：`baseline-v2.4`。已完成多指标评分、ADX 趋势强度过滤、ATR(20) 指标、长期赔率因子、ETF 映射表、分市场热度门控、70/15/15 阶梯建仓加仓、分市场/分波动止损、90 日最大持有、真实账户净值回测、归因分析、信号重算、操作建议解释、建议仓位落库、持仓/流水事务化、Streamlit 仪表盘和持仓管理。
 
 文档入口：
 
@@ -54,7 +54,7 @@ SELL = score <= -50 且至少 2 个子信号为负
 |---|---|
 | ETF 映射 | 27 只 ETF 已补齐 `market / tracking_index / sector / theme / category / regime_group`，并可同步到 `etf_mapping` 表 |
 | 港股指数 | 恒生科技 HZ5017 使用 Tushare `index_global(HKTECH)`，已回填 2020-07-27 ~ 2026-06-03 共 1436 条 |
-| 回归验证 | `uv run pytest -q` 通过 101 项 |
+| 回归验证 | `uv run pytest -q` 通过 111 项 |
 
 ## 快速开始
 
@@ -88,12 +88,20 @@ uv run python main.py schedule
 uv run python main.py check-data
 uv run python main.py sync-etf-mapping
 
+# baseline-v2.4 标准回归命令
+uv run python main.py rebuild-signals --start 2024-06-01 --end 2026-06-03
+uv run python main.py backtest-portfolio --start 2016-01-01 --end 2026-06-03 --capital 100000 --cost 0.0005 --slippage 0.0001
+
 # 真实账户净值口径回测（本地 backtest 模块；不上传远程）
 uv run python main.py backtest-portfolio --start 2024-06-01 --end 2026-06-03 --cost 0.0005 --slippage 0.0001
 
 # 市场门控归因和亏损交易误判分析（本地 backtest 模块；不上传远程）
 uv run python main.py backtest-attribution --start 2024-06-01 --end 2026-06-03
 uv run python main.py backtest-misjudge --start 2024-06-01 --end 2026-06-03
+
+# 消融实验入口（本地 backtest 模块；不上传远程）
+uv run python ablation.py --matrix entry-add-budget --start 2016-01-01
+uv run python ablation.py --matrix relative-strength --start 2016-01-01 --end 2026-06-03 --capital 100000 --cost 0.0005 --slippage 0.0001
 
 # 只重算 signals，不影响 quote / indicators
 uv run python main.py rebuild-signals --start 2024-06-01 --end 2026-06-03
@@ -104,7 +112,8 @@ uv run pytest -q
 ## 项目结构
 
 ```text
-main.py                       统一 CLI 入口
+main.py                       生产 CLI 入口
+ablation.py                   消融实验 CLI 入口
 init_db.py                    初始化和历史回填编排
 src/
   config/                     settings.yaml + .env 配置读取
@@ -112,16 +121,16 @@ src/
   indicators/                 MA、MACD、Bollinger、RSI、Volume、ADX、ATR、LongTermOdds
   strategy/                   交易信号生成，当前生产为 multi_indicator_scoring
   risk/                       90 日最大持有、profile 止损等风控规则链
-  advisor/                    信号 x 持仓 x 溢价/市场门控 -> 操作建议
+  advisor/                    信号 x 持仓 x 溢价/市场门控 -> 操作建议和解释
   runner/                     每日 STEP 1-5 编排
   service/                    指标、持仓、日历、信号重算、回测、盈亏等业务服务
   database/                   SQLAlchemy schema + repository，含 ETF 映射表
   models/                     Pydantic 业务模型
-  dashboard/                  Streamlit 五页仪表盘
+  dashboard/                  Streamlit 五页仪表盘，含建议预算/解释展示
 tests/                        指标和策略单元测试
 ```
 
-说明：`src/backtest/` 和 `src/ds_backtest/` 为本地实验目录，开发规划、实验记录和架构归档等本地资料已在 `.gitignore` 中排除，不上传远程仓库。
+说明：`src/backtest/` 和 `src/ds_backtest/` 为本地实验目录，`ablation.py` 只负责调用本地消融矩阵；开发规划、实验记录和架构归档等本地资料已在 `.gitignore` 中排除，不上传远程仓库。
 
 ## 数据链路
 
@@ -133,7 +142,7 @@ STEP 2  计算技术指标和长期赔率，写入 indicators.data
 STEP 2B 计算 market_regime
 STEP 3  生成 BUY / SELL / HOLD，写入 signals
 STEP 4  检查 90 日最大持有和 profile 止损
-STEP 5  生成 operation_advice
+STEP 5  生成 operation_advice，写入建议预算、score、市场状态、止损 profile 和拦截原因
 ```
 
 数据源分工：

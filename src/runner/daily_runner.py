@@ -16,6 +16,7 @@ from src.database import (
     indicators_repo, signals_repo, positions_repo, advice_repo, quote_repo,
     trade_records_repo, market_regime_repo,
 )
+from src.database.schema_maintenance import ensure_operation_advice_columns
 from src.fetcher import DailyFetcher, DataManager
 from src.indicators import ADX, ATR, MASystem, MACD, Bollinger, RSI, VolumeIndicator, LongTermOdds
 from src.models import OperationAdvice
@@ -47,7 +48,8 @@ def run_daily(target_date: date | None = None) -> None:
         >>> run_daily(date.today())
     """
     config = load_config()
-    init_engine(config.db_url)
+    engine = init_engine(config.db_url)
+    ensure_operation_advice_columns(engine)
 
     calendar = TradingCalendarService()
     t_minus_1_str = calendar.get_previous_trading_day(target_date or date.today())
@@ -208,7 +210,12 @@ def _step4_risk_check(config: AppConfig, t_minus_1: date) -> dict[str, dict]:
         result = controller.check_position(pos_dict, latest.close)
         if result is not None:
             logger.info(f"STEP4: {pos.code} 触发风控 — {result.reason}")
-            risk_signals[pos.code] = {"signal": result.signal, "source": result.source}
+            risk_signals[pos.code] = {
+                "signal": result.signal,
+                "source": result.source,
+                "reason": result.reason,
+                "stop_loss_profile": stop_loss_profiles.get(pos.code, "fixed_8"),
+            }
 
     return risk_signals
 
@@ -245,6 +252,7 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
     current_prices: dict[str, float] = {}
     last_buy_dates: dict[str, date] = {}
     add_counts: dict[str, int] = {}
+    stop_loss_profiles = {etf.symbol: etf.stop_loss_profile for etf in config.etf_list}
     # v2.1A：从 indicators 表提取 T-1 赔率数据，组装 odds_map 传入 advisor
     odds_map: dict[str, dict] = {}
     market_regime_record = market_regime_repo.find_by_date(t_minus_1)
@@ -295,6 +303,7 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         last_buy_dates=last_buy_dates,
         add_counts=add_counts,
         entry_add_budget=config.strategy_params.get("entry_add_budget", {}),
+        stop_loss_profiles=stop_loss_profiles,
         add_cooldown_days=config.strategy_params.get("cooldown_days", 5),
     )
     records = [OperationAdvice(**a) for a in advices]
