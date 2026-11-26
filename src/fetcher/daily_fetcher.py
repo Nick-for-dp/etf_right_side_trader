@@ -41,58 +41,6 @@ class DailyFetcher(BaseFetcher):
             hist_list.append(item)
         return hist_list
     
-    @rate_limit(min_interval=6.0, key="akshare")
-    @retry_on_error(max_retries=3, retry_delay=8.0)
-    def get_etf_metric_from_eastmoney(
-        self,
-        symbol: str,
-        start_date: str,
-        end_date: str
-    ) -> Optional[pd.DataFrame]:
-        """从东方财富网获取 ETF 的单位净值指标。
-
-        Args:
-            symbol: ETF代码
-            start_date: 开始日期，格式 "YYYYMMDD"
-            end_date: 结束日期，格式 "YYYYMMDD"
-
-        Returns:
-            包含 trade_date/symbol/nav 列的 DataFrame，无数据时返回 None
-
-        Example:
-            >>> fetcher = DailyFetcher()
-            >>> df = fetcher.get_etf_metric_from_eastmoney("159227", "20260401", "20260428")
-            >>> print(df.columns.tolist())
-            ['trade_date', 'symbol', 'nav']
-        """
-        if not end_date:
-            end_date = datetime.today().strftime("%Y%m%d")
-
-        try:
-            raw_df = ak.fund_etf_fund_info_em(fund=symbol, start_date=start_date, end_date=end_date)
-
-            if raw_df.empty or raw_df is None:
-                logger.warning(f"获取{symbol} {start_date} 至 {end_date} 的单位净值数据为空。")
-                return None
-
-            required_columns = {"净值日期", "单位净值"}
-            missing_columns = required_columns - set[Any](raw_df.columns)
-
-            if missing_columns:
-                logger.warning(f"获取{symbol} {start_date} 至 {end_date} 的数据字段缺失: missing={missing_columns}。")
-                return None
-
-            column_map = {
-                "nav": "单位净值"
-            }
-            hist_metric_data_list = self._build_hist_data_list(raw_df, symbol, column_map, date_field_name="净值日期")
-            logger.info(f"成功获取{symbol} {start_date} 至 {end_date} 的净值数据，记录数为{len(hist_metric_data_list)}。")
-            return pd.DataFrame(hist_metric_data_list)
-        # 网络异常向上传播，由 @retry_on_error 装饰器处理重试
-        except (ValueError, KeyError, TypeError) as e:
-            logger.error(f"数据解析错误 symbol={symbol}，开始时间为{start_date}，结束时间为{end_date}，错误信息：{e}。")
-            return None
-    
     @rate_limit(min_interval=6.0, key="baostock")
     @retry_on_error(max_retries=3, retry_delay=8.0)
     def get_etf_daily_from_baostock(
@@ -230,7 +178,6 @@ class DailyFetcher(BaseFetcher):
         OHLCV 优先使用 BaoStock（稳定，适合日常增量），BaoStock 无数据时
         回退到东方财富 fund_etf_hist_em（支持全量历史，但反爬严格）。
         skip_baostock=True 时跳过 BaoStock，直接走东方财富（历史回填场景）。
-        NAV 始终来自东方财富 fund_etf_fund_info_em。
 
         Args:
             symbol: ETF 代码
@@ -239,7 +186,7 @@ class DailyFetcher(BaseFetcher):
             skip_baostock: True 时跳过 BaoStock，直接使用东方财富
 
         Returns:
-            列包含 code/date/open/high/low/close/volume/nav/premium_rate 的 DataFrame
+            列包含 code/date/open/high/low/close/volume 的 DataFrame
         """
         # 东方财富日期格式为 YYYYMMDD
         start_fmt = start_date.replace("-", "")
@@ -259,21 +206,8 @@ class DailyFetcher(BaseFetcher):
             logger.warning(f"{symbol} 在 {start_date}~{end_date} 无数据")
             return pd.DataFrame()
 
-        nav_df = self.get_etf_metric_from_eastmoney(symbol, start_fmt, end_fmt)
-
-        if nav_df is not None and not nav_df.empty:
-            # 统一 trade_date 为 str，防止上游 dtype 不一致导致 merge 静默失败
-            ohlcv_df["trade_date"] = ohlcv_df["trade_date"].astype(str)
-            nav_df["trade_date"] = nav_df["trade_date"].astype(str)
-            merged = ohlcv_df.merge(nav_df, on=["trade_date", "symbol"], how="left")
-            # 归一化 NAV：空字符串/非法值 → NaN，避免下游出现三种状态
-            merged["nav"] = pd.to_numeric(merged["nav"], errors="coerce")
-        else:
-            merged = ohlcv_df
-            merged["nav"] = None
-
         # 统一列名与模型对齐
-        merged = merged.rename(columns={
+        merged = ohlcv_df.rename(columns={
             "trade_date": "date",
             "symbol": "code",
             "open_px": "open",
@@ -282,16 +216,7 @@ class DailyFetcher(BaseFetcher):
             "close_px": "close",
         })
 
-        # 计算溢价率
-        merged["premium_rate"] = merged.apply(
-            lambda r: (r["close"] - r["nav"]) / r["nav"]
-            if pd.notna(r["nav"]) and r["nav"] != 0
-            else None,
-            axis=1,
-        )
-
-        return merged[["code", "date", "open", "high", "low",
-                        "close", "volume", "nav", "premium_rate"]]
+        return merged[["code", "date", "open", "high", "low", "close", "volume"]]
 
 
 if __name__ == "__main__":

@@ -21,8 +21,6 @@ data.db
 .pytest_cache/
 
 # Local tests sandbox
-tests/
-src/backtest/
 ablation.py
 
 # Local development/planning docs

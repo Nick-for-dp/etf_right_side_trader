@@ -1,17 +1,20 @@
-"""指标计算编排：取行情 → 调计算器 → 合并 → 逐日入库。"""
+"""指标计算编排：取行情 → 调计算器 → 合并 → 逐日入库。
+
+build_indicator_service 是唯一的指标注册入口，init / 每日流程 / 重建共用。
+"""
 
 from datetime import date, timedelta
 
 import pandas as pd
 
 from src.database import indicators_repo, quote_repo
-from src.indicators import BaseIndicator
+from src.indicators import ADX, ATR, MASystem, MACD, BaseIndicator, Bollinger, RSI, VolumeIndicator
 from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-# 安全冗余窗口：拉取行情时往前多取的天数，保证 rolling 计算有足够历史
-# v2.1A 升级：LongTermOdds 需要 L+H ≈ 1008 交易日 ≈ 4 年，改为 1500 日历天
+# 向前多取的行情只用于预热。MACD/RSI/ADX 含无限记忆的指数平滑，
+# 预热长度会轻微影响数值，固定为 1500 天以保证历史与每日增量口径一致。
 _LOOKBACK_PADDING = 1500
 
 
@@ -23,7 +26,7 @@ class IndicatorService:
         self._calculators: list[BaseIndicator] = []
 
     def register(self, calculator: BaseIndicator) -> None:
-        """注册一个指标计算器。v1.1 只需加一行 register(MACD())。"""
+        """注册一个指标计算器。"""
         self._calculators.append(calculator)
 
     def calculate_and_save(self, code: str,
@@ -33,35 +36,17 @@ class IndicatorService:
 
         自动向前扩展行情查询范围（_LOOKBACK_PADDING 天），保证 MA 等
         rolling 计算有足够历史数据，但只保存 calc_start ~ calc_end 的结果。
-
-        Args:
-            code: ETF 代码
-            calc_start: 计算起始日期
-            calc_end: 计算截止日期
-
-        Returns:
-            成功保存的指标记录条数
-
-        Example:
-            >>> service = IndicatorService()
-            >>> service.register(MASystem(20, 60))
-            >>> n = service.calculate_and_save("588000", date(2026, 4, 25), date(2026, 4, 25))
-            >>> n > 0
-            True
         """
         if not self._calculators:
             logger.warning("未注册任何指标计算器，跳过。")
             return 0
 
-        # 拉取足够历史的行情数据
         fetch_start = calc_start - timedelta(days=_LOOKBACK_PADDING)
         quotes = quote_repo.find_by_code_in_range(code, fetch_start, calc_end)
         if not quotes:
             logger.warning(f"{code} 在 {fetch_start} ~ {calc_end} 无行情数据，跳过。")
             return 0
 
-        # 转 DataFrame，按 date 升序
-        # v2.1A：新增 nav 和 premium_rate，供 LongTermOdds 使用
         price_df = pd.DataFrame(
             [{
                 "date": str(q.date),
@@ -70,8 +55,6 @@ class IndicatorService:
                 "low": q.low,
                 "close": q.close,
                 "volume": q.volume,
-                "nav": q.nav,
-                "premium_rate": q.premium_rate,
             } for q in quotes]
         ).sort_values("date").reset_index(drop=True)
 
@@ -81,13 +64,11 @@ class IndicatorService:
             ind_df = calc.calculate(price_df)
             result = result.merge(ind_df, on="date", how="left")
 
-        # 只保留目标区间
         result = result[
             (result["date"] >= str(calc_start)) &
             (result["date"] <= str(calc_end))
         ]
 
-        # 逐行保存
         saved = 0
         for _, row in result.iterrows():
             data = {
@@ -99,3 +80,22 @@ class IndicatorService:
                 saved += 1
 
         return saved
+
+
+def build_indicator_service(config) -> IndicatorService:
+    """按 settings.yaml 构建生产指标集合（7 个）。
+
+    这是唯一的指标注册入口，init / 每日流程 / rebuild 共用。
+    """
+    service = IndicatorService()
+    service.register(MASystem(
+        ma_short=config.strategy_params.get("ma_short", 20),
+        ma_long=config.strategy_params.get("ma_long", 60),
+    ))
+    service.register(MACD())
+    service.register(Bollinger(window=20, num_std=2.0))
+    service.register(RSI(period=14))
+    service.register(VolumeIndicator(window=20))
+    service.register(ADX(period=14))
+    service.register(ATR(period=20))
+    return service

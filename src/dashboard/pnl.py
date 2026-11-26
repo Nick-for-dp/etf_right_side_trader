@@ -54,7 +54,7 @@ def run():
             capital=_DEFAULT_CAPITAL,
         )
 
-    selected_result = result["versions"].get("v2.3-full-gate") or result["versions"].get("v2.2")
+    selected_result = next(iter(result["versions"].values()), None)
     if selected_result is None:
         st.info("所选区间内无信号数据")
         return

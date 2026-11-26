@@ -9,11 +9,12 @@ import yaml
 from dotenv import load_dotenv
 
 
-_VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd", "multi_indicator_scoring"}
-_VALID_DB_DRIVERS = {"postgresql", "mysql"}
+_VALID_STRATEGY_TYPES = {"multi_indicator_scoring"}
+_VALID_DB_DRIVERS = {"postgresql"}
 _VALID_VOLATILITY_GROUPS = {"high_vol", "low_vol", "unknown_vol"}
-_VALID_SIGNAL_PROFILE_KINDS = {"high_vol_balanced", "relaxed_default"}
+_VALID_SIGNAL_PROFILE_KINDS = {"high_vol_balanced"}
 _VALID_ENTRY_BUDGET_OVERRIDE_KINDS = {"quality_tier"}
+_VALID_RISK_RULE_TYPES = ("profile_stop_loss", "max_holding_days")
 _VALID_STOP_LOSS_PROFILES = {
     "none",
     "fixed_6",
@@ -237,13 +238,7 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
     if stype not in _VALID_STRATEGY_TYPES:
         raise ValueError(f"strategy.type 无效: {stype}，仅支持 {_VALID_STRATEGY_TYPES}")
     params = raw.get("params", {})
-    if stype in ("ma_cross", "ma_cross_macd"):
-        ms = params.get("ma_short", 20)
-        ml = params.get("ma_long", 60)
-        if not (isinstance(ms, int) and isinstance(ml, int) and 0 < ms < ml):
-            raise ValueError(f"{stype} 需 0 < ma_short < ma_long，实际: {ms}, {ml}")
-        params = {"ma_short": ms, "ma_long": ml}
-    if stype == "multi_indicator_scoring":
+    if True:
         weights = params.get("weights", {})
         required_keys = ("trend", "macd", "rsi", "bb")
         for k in required_keys:
@@ -406,10 +401,11 @@ def _validate_risk_rules(raw: list) -> list[dict]:
         rparams = rule.get("params", {})
         if not rtype:
             raise ValueError(f"risk_control.rules[{i}] 缺少 type")
-        if rtype == "stop_loss":
-            threshold = rparams.get("threshold")
-            if not isinstance(threshold, (int, float)) or threshold >= 0:
-                raise ValueError(f"stop_loss.threshold 需 < 0，实际: {threshold}")
+        if rtype not in _VALID_RISK_RULE_TYPES:
+            raise ValueError(
+                f"risk_control.rules[{i}].type 无效: {rtype}，"
+                f"仅支持 {_VALID_RISK_RULE_TYPES}"
+            )
         if rtype == "profile_stop_loss":
             default_profile = str(rparams.get("default_profile", "fixed_8")).strip()
             if default_profile not in _VALID_STOP_LOSS_PROFILES:
@@ -421,17 +417,6 @@ def _validate_risk_rules(raw: list) -> list[dict]:
             days = rparams.get("days")
             if not isinstance(days, int) or days <= 0:
                 raise ValueError(f"max_holding_days.days 需为 > 0 的整数，实际: {days}")
-        if rtype == "trailing_stop":
-            profit = rparams.get("profit_threshold")
-            drawdown = rparams.get("drawdown_threshold")
-            if not isinstance(profit, (int, float)) or profit <= 0:
-                raise ValueError(
-                    f"trailing_stop.profit_threshold 需 > 0，实际: {profit}"
-                )
-            if not isinstance(drawdown, (int, float)) or drawdown <= 0:
-                raise ValueError(
-                    f"trailing_stop.drawdown_threshold 需 > 0，实际: {drawdown}"
-                )
         rules.append({"type": rtype, "params": rparams})
     return rules
 
@@ -467,7 +452,7 @@ def load_config(path: str | Path = "settings.yaml") -> AppConfig:
     Example:
         >>> config = load_config()
         >>> print(config.strategy_type)
-        'ma_cross'
+        'multi_indicator_scoring'
     """
 
     load_dotenv(override=False)

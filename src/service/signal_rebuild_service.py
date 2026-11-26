@@ -1,22 +1,25 @@
-"""重建 signals 表的服务。
+"""signals 表的生成与重建。
 
 只使用现有 indicators 与 quote.close 重算策略信号，不改 quote / indicators。
+generate_code_signals 是唯一的信号生成实现，init / 每日流程 / rebuild 共用。
 """
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
 from src.config import AppConfig
 from src.database import advice_repo, indicators_repo, quote_repo, signals_repo
 from src.models import Signal
-from src.runner.daily_runner import _step5_generate_advice
 from src.strategy import create_strategy
 from src.utils import get_logger
 
 logger = get_logger(__name__)
+
+# 首日 RSI 一阶差分所需的上下文
+_CONTEXT_DAYS = 10
 
 
 @dataclass
@@ -109,7 +112,8 @@ def rebuild_signals(
     signal_records: list[Signal] = []
 
     for code in target_codes:
-        stats = _generate_code_signals(code, start, end, strategy, signal_records)
+        records, stats = generate_code_signals(code, start, end, strategy)
+        signal_records.extend(records)
         result.code_stats.append(stats)
 
     result.saved_signals = len(signal_records)
@@ -132,7 +136,8 @@ def rebuild_signals(
             result.deleted_advice = advice_repo.delete_by_codes_between(
                 target_codes, latest_signal_date, latest_signal_date
             )
-            _step5_generate_advice(config, latest_signal_date, risk_signals={})
+            from src.runner.daily_runner import generate_advice_for_date
+            generate_advice_for_date(config, latest_signal_date)
             result.rebuilt_latest_advice_date = latest_signal_date
 
     return result
@@ -170,25 +175,33 @@ def format_rebuild_signals_report(result: RebuildSignalsResult) -> str:
     return "\n".join(lines)
 
 
-def _generate_code_signals(
+def generate_code_signals(
     code: str,
     start: date,
     end: date,
     strategy,
-    sink: list[Signal],
-) -> CodeRebuildStats:
+) -> tuple[list[Signal], CodeRebuildStats]:
+    """从库内 indicators + quote.close 生成 [start, end] 的信号（唯一的信号生成实现）。
+
+    多取前 10 个日历日的指标作为上下文，保证首日的 RSI 一阶差分正确；
+    只返回 start ~ end 的行。
+    """
     stats = CodeRebuildStats(code=code)
-    indicators = indicators_repo.find_by_code_between(code, start, end)
-    quotes = quote_repo.find_by_code_in_range(code, start, end)
+    indicators = indicators_repo.find_by_code_between(
+        code, start - timedelta(days=_CONTEXT_DAYS), end
+    )
+    quotes = quote_repo.find_by_code_in_range(
+        code, start - timedelta(days=_CONTEXT_DAYS), end
+    )
     stats.indicators = len(indicators)
     stats.quotes = len(quotes)
 
     if not indicators:
         stats.warning = "no_indicators"
-        return stats
+        return [], stats
     if not quotes:
         stats.warning = "no_quotes"
-        return stats
+        return [], stats
 
     close_map = {str(q.date): q.close for q in quotes}
     rows = []
@@ -202,6 +215,7 @@ def _generate_code_signals(
     stats.skipped_missing_close = int(df["close"].isna().sum())
     signal_df = strategy.generate(df)
 
+    records: list[Signal] = []
     for _, row in signal_df.iterrows():
         signal_date = row["date"]
         if isinstance(signal_date, str):
@@ -211,7 +225,7 @@ def _generate_code_signals(
         signal_value = row["signal"]
         version = row["strategy_version"]
         meta = row["signal_meta"] or {}
-        sink.append(Signal(
+        records.append(Signal(
             code=code,
             date=signal_date,
             signal=signal_value,
@@ -224,7 +238,7 @@ def _generate_code_signals(
         stats.signal_counts[signal_value] += 1
         stats.versions[version] += 1
 
-    return stats
+    return records, stats
 
 
 def _find_latest_signal_date(stats: list[CodeRebuildStats], end: date) -> date | None:

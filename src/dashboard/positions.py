@@ -56,6 +56,8 @@ def run() -> None:
                     "盈亏%": f"{pnl * 100:+.2f}%" if pnl is not None else "-",
                     "股数": pos.shares,
                     "入场日": str(pos.entry_date),
+                    "首次建仓": str(pos.first_entry_date) if pos.first_entry_date else "-",
+                    "已加仓": pos.add_count,
                     "建议": advice.advice if advice else "",
                     "本次预算": _format_ratio(advice.target_budget_ratio if advice else None),
                     "本次阶梯": (

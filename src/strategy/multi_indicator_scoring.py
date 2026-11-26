@@ -1,13 +1,23 @@
-"""Multi-indicator scoring strategy.
+"""多指标评分策略（v2.5 limited，唯一生产策略）。
 
-The default profile is the v2.3 production signal. Optional volatility scoped
-profiles can override signal generation for selected ETF groups.
+默认 profile：趋势/MACD/RSI/布林四因子加权评分（低波 ETF）。
+high_vol profile：六因子评分 + 趋势闸门 + ADX 过滤（高波 ETF），
+由 settings.yaml 的 strategy.params.volatility_signal_profiles.high_vol 开关。
+每行信号只依赖当日指标和前一日 RSI，按 ETF 分别计算。
 """
 
 import numpy as np
 import pandas as pd
 
 from .base import BaseStrategy
+
+HIGH_VOL_PROFILE = "high_vol_balanced"
+_HIGH_VOL_DEFAULTS = {
+    "buy_threshold": 45,
+    "sell_threshold": -35,
+    "adx_min": 18,
+    "min_positive": 3,
+}
 
 
 class MultiIndicatorScoring(BaseStrategy):
@@ -89,11 +99,10 @@ class MultiIndicatorScoring(BaseStrategy):
 
         for code in df["code"].unique():
             code_df = df[df["code"] == code].sort_values("date").reset_index(drop=True)
-            profile = self._profile_for_code(code)
-            if profile == "high_vol_balanced":
+            if self._high_vol_enabled_for(code):
                 results.extend(self._generate_high_vol_balanced(code_df))
             else:
-                results.extend(self._generate_default(code_df, profile=profile))
+                results.extend(self._generate_default(code_df))
 
         if results:
             return pd.DataFrame(results, columns=[
@@ -103,24 +112,14 @@ class MultiIndicatorScoring(BaseStrategy):
             columns=["code", "date", "signal", "strategy_version", "signal_meta"]
         )
 
-    def _generate_default(
-        self,
-        code_df: pd.DataFrame,
-        profile: str | None = None,
-    ) -> list[dict]:
-        # 检查当前code是否有profile参数覆盖
-        code = code_df.iloc[0]["code"]
-        profile_params = self._profile_params(code)
-        buy_th = profile_params.get("buy_threshold", self.thresholds["buy"])
-        sell_th = profile_params.get("sell_threshold", self.thresholds["sell"])
-        min_pos = profile_params.get("min_positive", 2)
+    def _generate_default(self, code_df: pd.DataFrame) -> list[dict]:
         required = [
             "ma20", "ma60", "close", "dif", "dea", "rsi",
             "bb_upper", "bb_lower", "bb_mid", "bb_width",
             "adx14", "vol_ratio",
         ]
         valid, invalid = self._split_valid_rows(code_df, required)
-        results = [self._hold_row(row, profile=profile) for _, row in invalid.iterrows()]
+        results = [self._signal_row(row, "HOLD", {}) for _, row in invalid.iterrows()]
         if valid.empty:
             return results
 
@@ -157,7 +156,9 @@ class MultiIndicatorScoring(BaseStrategy):
             + (s_rsi > 0).astype(int)
             + (s_bb > 0).astype(int)
         )
-        signal[(score >= buy_th) & (pos_count >= min_pos)] = "BUY"
+        signal[
+            (score >= self.thresholds["buy"]) & (pos_count >= 2)
+        ] = "BUY"
 
         neg_count = (
             (s_trend < 0).astype(int)
@@ -165,7 +166,7 @@ class MultiIndicatorScoring(BaseStrategy):
             + (s_rsi < 0).astype(int)
             + (s_bb < 0).astype(int)
         )
-        signal[(score <= sell_th) & (neg_count >= 2)] = "SELL"
+        signal[(score <= self.thresholds["sell"]) & (neg_count >= 2)] = "SELL"
 
         adx_mult_series = pd.Series(adx_mult, index=valid.index)
         for idx, row in valid.iterrows():
@@ -181,8 +182,6 @@ class MultiIndicatorScoring(BaseStrategy):
                 "raw_score": round(float(raw_score.loc[idx]), 6),
                 "score": round(float(score.loc[idx]), 4),
             }
-            if profile:
-                meta["profile"] = profile
             results.append(self._signal_row(row, signal.loc[idx], meta))
         return results
 
@@ -194,7 +193,7 @@ class MultiIndicatorScoring(BaseStrategy):
         ]
         valid, invalid = self._split_valid_rows(code_df, required)
         results = [
-            self._hold_row(row, profile="high_vol_balanced")
+            self._signal_row(row, "HOLD", {"profile": HIGH_VOL_PROFILE})
             for _, row in invalid.iterrows()
         ]
         if valid.empty:
@@ -220,22 +219,13 @@ class MultiIndicatorScoring(BaseStrategy):
             + s_atr * 0.05
         ) * 100
 
-        params = self._profile_params(code_df.iloc[0]["code"])
-        buy_th = params["buy_threshold"]
-        sell_th = params["sell_threshold"]
-        adx_min = params["adx_min"]
-        min_pos = params["min_positive"]
+        buy_th = _HIGH_VOL_DEFAULTS["buy_threshold"]
+        sell_th = _HIGH_VOL_DEFAULTS["sell_threshold"]
+        adx_min = _HIGH_VOL_DEFAULTS["adx_min"]
+        min_pos = _HIGH_VOL_DEFAULTS["min_positive"]
 
-        trend_gate_parts = []
-        if params["trend_gate_ma20_above_ma60"]:
-            trend_gate_parts.append(valid["ma20"] >= valid["ma60"])
-        if params["trend_gate_close_above_ma60"]:
-            trend_gate_parts.append(valid["close"] >= valid["ma60"])
-        trend_gate = trend_gate_parts[0] if len(trend_gate_parts) == 1 else (
-            trend_gate_parts[0] | trend_gate_parts[1]
-        )
-
-        macd_not_bad = self._macd_hist(valid) >= params["macd_not_bad_threshold"]
+        trend_gate = (valid["ma20"] >= valid["ma60"]) | (valid["close"] >= valid["ma60"])
+        macd_not_bad = self._macd_hist(valid) >= -0.002
         positive_count = (
             (s_trend > 0).astype(int)
             + (s_macd > 0).astype(int)
@@ -262,7 +252,7 @@ class MultiIndicatorScoring(BaseStrategy):
 
         for idx, row in valid.iterrows():
             meta = {
-                "profile": "high_vol_balanced",
+                "profile": HIGH_VOL_PROFILE,
                 "s_trend": round(float(s_trend.loc[idx]), 6),
                 "s_macd": round(float(s_macd.loc[idx]), 6),
                 "s_rsi": round(float(s_rsi.loc[idx]), 6),
@@ -276,62 +266,23 @@ class MultiIndicatorScoring(BaseStrategy):
             results.append(self._signal_row(row, signal.loc[idx], meta))
         return results
 
-    def _profile_for_code(self, code: str) -> str | None:
+    def _high_vol_enabled_for(self, code: str) -> bool:
         group = self.code_volatility_groups.get(code, "unknown_vol")
         profile = self.volatility_signal_profiles.get(group) or {}
-        if not profile.get("enabled", False):
-            return None
-        return profile.get("kind")
-
-    def _profile_params(self, code: str) -> dict:
-        group = self.code_volatility_groups.get(code, "unknown_vol")
-        profile = self.volatility_signal_profiles.get(group) or {}
-        if not profile.get("enabled", False):
-            return {}
-        params = profile.get("params", {}) or {}
-        result = {}
-        kind = profile.get("kind", "")
-        if kind == "high_vol_balanced":
-            result = {
-                "buy_threshold": params.get("buy_threshold", 45),
-                "sell_threshold": params.get("sell_threshold", -35),
-                "adx_min": params.get("adx_min", 18),
-                "min_positive": params.get("min_positive", 3),
-                "trend_gate_ma20_above_ma60": params.get("trend_gate_ma20_above_ma60", True),
-                "trend_gate_close_above_ma60": params.get("trend_gate_close_above_ma60", True),
-                "macd_not_bad_threshold": params.get("macd_not_bad_threshold", -0.002),
-            }
-        elif kind == "relaxed_default":
-            result = {
-                "buy_threshold": params.get("buy_threshold", 40),
-                "sell_threshold": params.get("sell_threshold", -45),
-                "min_positive": params.get("min_positive", 1),
-            }
-        return result
-
-    def _has_enabled_profile(self) -> bool:
-        return any(
-            profile.get("enabled", False)
-            for profile in self.volatility_signal_profiles.values()
-        )
+        return bool(profile.get("enabled", False))
 
     def _resolve_version(self) -> str:
-        if not self._has_enabled_profile():
+        """信号版本：未开 high_vol profile 为 2.3；开启且参数为基线为 2.5。"""
+        enabled = [
+            profile.get("params", {}) or {}
+            for profile in self.volatility_signal_profiles.values()
+            if profile.get("enabled", False)
+        ]
+        if not enabled:
             return "2.3"
-        for profile in self.volatility_signal_profiles.values():
-            if not profile.get("enabled", False):
-                continue
-            kind = profile.get("kind", "")
-            params = profile.get("params", {}) or {}
-            if kind == "relaxed_default":
-                return "2.6"
-            if kind == "high_vol_balanced" and (
-                params.get("buy_threshold", 45) != 45
-                or params.get("sell_threshold", -35) != -35
-                or params.get("adx_min", 18) != 18
-                or params.get("min_positive", 3) != 3
-            ):
-                return "2.6"
+        for params in enabled:
+            if any(params.get(key, value) != value for key, value in _HIGH_VOL_DEFAULTS.items()):
+                return "custom"
         return "2.5"
 
     @staticmethod
@@ -345,10 +296,6 @@ class MultiIndicatorScoring(BaseStrategy):
                 work[col] = np.nan
         mask = work[required].isna().any(axis=1)
         return work.loc[~mask].copy(), work.loc[mask].copy()
-
-    def _hold_row(self, row: pd.Series, profile: str | None = None) -> dict:
-        meta = {"profile": profile} if profile else {}
-        return self._signal_row(row, "HOLD", meta)
 
     def _signal_row(self, row: pd.Series, signal: str, meta: dict) -> dict:
         return {

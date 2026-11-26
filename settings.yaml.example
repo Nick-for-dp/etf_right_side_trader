@@ -1,553 +1,381 @@
-# ETF 右侧交易助手配置模板
-# 复制为 settings.yaml 后按需调整。本文件不包含密钥，数据库密码写入 .env。
-
-etf_list:
-  - symbol: "588000"
-    name: "科创50ETF"
-    market: "A股"
-    tracking_index: "000688"
-    sector: "科技"
-    theme: "科创50"
-    category: "broad"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "513180"
-    name: "恒生科技ETF华夏"
-    market: "港股"
-    tracking_index: "HZ5017"
-    sector: "科技"
-    theme: "恒生科技"
-    category: "broad"
-    regime_group: "港股"  # 使用恒生科技 HZ5017 独立 regime
-    volatility_group: "high_vol"
-    stop_loss_profile: "fixed_8"
-
-  - symbol: "513100"
-    name: "纳指ETF国泰"
-    market: "美股"
-    tracking_index: "NDX"
-    sector: "科技"
-    theme: "NASDAQ100"
-    category: "broad"
-    regime_group: "美股"  # 使用 NDX 独立 regime
-    volatility_group: "low_vol"
-    stop_loss_profile: "fixed_8"
-
-  - symbol: "159949"
-    name: "创业板50ETF华安"
-    market: "A股"
-    tracking_index: "399673"
-    sector: "创业板"
-    theme: "创业板50"
-    category: "broad"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159227"
-    name: "航空航天ETF华夏"
-    market: "A股"
-    tracking_index: "UNKNOWN"
-    sector: "国防军工"
-    theme: "航空航天"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "512480"
-    name: "半导体ETF国联安"
-    market: "A股"
-    tracking_index: "H30184"
-    sector: "科技"
-    theme: "半导体"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "515700"
-    name: "新能源车ETF平安"
-    market: "A股"
-    tracking_index: "930997"
-    sector: "新能源"
-    theme: "新能源车"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "515050"
-    name: "通信ETF华夏"
-    market: "A股"
-    tracking_index: "931079"
-    sector: "通信"
-    theme: "5G通信"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "159755"
-    name: "电池ETF广发"
-    market: "A股"
-    tracking_index: "980032"
-    sector: "新能源"
-    theme: "新能电池"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "159611"
-    name: "电力ETF广发"
-    market: "A股"
-    tracking_index: "H30199"
-    sector: "电力"
-    theme: "电力指数"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159326"
-    name: "电网设备ETF华夏"
-    market: "A股"
-    tracking_index: "931994"
-    sector: "电力设备"
-    theme: "电网设备主题"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159278"
-    name: "机器人ETF鹏华"
-    market: "A股"
-    tracking_index: "980022"
-    sector: "机械设备"
-    theme: "CNIROBOT"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "515790"
-    name: "光伏ETF华泰柏瑞"
-    market: "A股"
-    tracking_index: "931151"
-    sector: "新能源"
-    theme: "光伏产业"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "159805"
-    name: "传媒ETF鹏华"
-    market: "A股"
-    tracking_index: "399971"
-    sector: "传媒"
-    theme: "中证传媒"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "159825"
-    name: "农业ETF富国"
-    market: "A股"
-    tracking_index: "000949"
-    sector: "农林牧渔"
-    theme: "中证农业"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159870"
-    name: "化工ETF鹏华"
-    market: "A股"
-    tracking_index: "000813"
-    sector: "基础化工"
-    theme: "细分化工"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "512400"
-    name: "有色金属ETF南方"
-    market: "A股"
-    tracking_index: "000819"
-    sector: "有色金属"
-    theme: "有色金属"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "561360"
-    name: "石油ETF国泰"
-    market: "A股"
-    tracking_index: "H30198"
-    sector: "石油石化"
-    theme: "油气产业"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "515220"
-    name: "煤炭ETF国泰"
-    market: "A股"
-    tracking_index: "399998"
-    sector: "煤炭"
-    theme: "中证煤炭"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "515210"
-    name: "钢铁ETF国泰"
-    market: "A股"
-    tracking_index: "930606"
-    sector: "钢铁"
-    theme: "中证钢铁"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "516970"
-    name: "基建ETF广发"
-    market: "A股"
-    tracking_index: "399995"
-    sector: "基建"
-    theme: "基建工程"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "512170"
-    name: "医疗ETF华宝"
-    market: "A股"
-    tracking_index: "399989"
-    sector: "医药"
-    theme: "中证医疗"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159996"
-    name: "家电ETF国泰"
-    market: "A股"
-    tracking_index: "930697"
-    sector: "家用电器"
-    theme: "家用电器"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "159992"
-    name: "创新药ETF银华"
-    market: "A股"
-    tracking_index: "931152"
-    sector: "医药"
-    theme: "CS创新药"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
-  - symbol: "512880"
-    name: "证券ETF国泰"
-    market: "A股"
-    tracking_index: "399975"
-    sector: "非银金融"
-    theme: "证券公司"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "510150"
-    name: "消费ETF招商"
-    market: "A股"
-    tracking_index: "000069"
-    sector: "消费"
-    theme: "消费80"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "low_vol"
-    stop_loss_profile: "none"
-
-  - symbol: "512660"
-    name: "军工ETF国泰"
-    market: "A股"
-    tracking_index: "399967"
-    sector: "国防军工"
-    theme: "中证军工"
-    category: "sector"
-    regime_group: "A股"
-    volatility_group: "high_vol"
-    stop_loss_profile: "atr_2_5"
-
+data:
+  lookback_days: 1500
 database:
-  driver: "postgresql"
-
+  driver: postgresql
+etf_list:
+- category: broad
+  market: A股
+  name: 科创50ETF
+  regime_group: A股
+  sector: 科技
+  stop_loss_profile: atr_2_5
+  symbol: '588000'
+  theme: 科创50
+  tracking_index: 000688
+  volatility_group: high_vol
+- category: broad
+  market: 港股
+  name: 恒生科技ETF华夏
+  regime_group: 港股
+  sector: 科技
+  stop_loss_profile: fixed_8
+  symbol: '513180'
+  theme: 恒生科技
+  tracking_index: HZ5017
+  volatility_group: high_vol
+- category: broad
+  market: 美股
+  name: 纳指ETF国泰
+  regime_group: 美股
+  sector: 科技
+  stop_loss_profile: fixed_8
+  symbol: '513100'
+  theme: NASDAQ100
+  tracking_index: NDX
+  volatility_group: low_vol
+- category: broad
+  market: A股
+  name: 创业板50ETF华安
+  regime_group: A股
+  sector: 创业板
+  stop_loss_profile: none
+  symbol: '159949'
+  theme: 创业板50
+  tracking_index: '399673'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 航空航天ETF华夏
+  regime_group: A股
+  sector: 国防军工
+  stop_loss_profile: atr_2_5
+  symbol: '159227'
+  theme: 航空航天
+  tracking_index: UNKNOWN
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 半导体ETF国联安
+  regime_group: A股
+  sector: 科技
+  stop_loss_profile: atr_2_5
+  symbol: '512480'
+  theme: 半导体
+  tracking_index: H30184
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 新能源车ETF平安
+  regime_group: A股
+  sector: 新能源
+  stop_loss_profile: atr_2_5
+  symbol: '515700'
+  theme: 新能源车
+  tracking_index: '930997'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 通信ETF华夏
+  regime_group: A股
+  sector: 通信
+  stop_loss_profile: atr_2_5
+  symbol: '515050'
+  theme: 5G通信
+  tracking_index: '931079'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 电池ETF广发
+  regime_group: A股
+  sector: 新能源
+  stop_loss_profile: atr_2_5
+  symbol: '159755'
+  theme: 新能电池
+  tracking_index: '980032'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 电力ETF广发
+  regime_group: A股
+  sector: 电力
+  stop_loss_profile: none
+  symbol: '159611'
+  theme: 电力指数
+  tracking_index: H30199
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 电网设备ETF华夏
+  regime_group: A股
+  sector: 电力设备
+  stop_loss_profile: none
+  symbol: '159326'
+  theme: 电网设备主题
+  tracking_index: '931994'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 机器人ETF鹏华
+  regime_group: A股
+  sector: 机械设备
+  stop_loss_profile: atr_2_5
+  symbol: '159278'
+  theme: CNIROBOT
+  tracking_index: '980022'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 光伏ETF华泰柏瑞
+  regime_group: A股
+  sector: 新能源
+  stop_loss_profile: atr_2_5
+  symbol: '515790'
+  theme: 光伏产业
+  tracking_index: '931151'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 传媒ETF鹏华
+  regime_group: A股
+  sector: 传媒
+  stop_loss_profile: atr_2_5
+  symbol: '159805'
+  theme: 中证传媒
+  tracking_index: '399971'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 农业ETF富国
+  regime_group: A股
+  sector: 农林牧渔
+  stop_loss_profile: none
+  symbol: '159825'
+  theme: 中证农业
+  tracking_index: 000949
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 化工ETF鹏华
+  regime_group: A股
+  sector: 基础化工
+  stop_loss_profile: none
+  symbol: '159870'
+  theme: 细分化工
+  tracking_index: 000813
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 有色金属ETF南方
+  regime_group: A股
+  sector: 有色金属
+  stop_loss_profile: atr_2_5
+  symbol: '512400'
+  theme: 有色金属
+  tracking_index: 000819
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 石油ETF国泰
+  regime_group: A股
+  sector: 石油石化
+  stop_loss_profile: none
+  symbol: '561360'
+  theme: 油气产业
+  tracking_index: H30198
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 煤炭ETF国泰
+  regime_group: A股
+  sector: 煤炭
+  stop_loss_profile: atr_2_5
+  symbol: '515220'
+  theme: 中证煤炭
+  tracking_index: '399998'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 钢铁ETF国泰
+  regime_group: A股
+  sector: 钢铁
+  stop_loss_profile: none
+  symbol: '515210'
+  theme: 中证钢铁
+  tracking_index: '930606'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 基建ETF广发
+  regime_group: A股
+  sector: 基建
+  stop_loss_profile: none
+  symbol: '516970'
+  theme: 基建工程
+  tracking_index: '399995'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 医疗ETF华宝
+  regime_group: A股
+  sector: 医药
+  stop_loss_profile: none
+  symbol: '512170'
+  theme: 中证医疗
+  tracking_index: '399989'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 家电ETF国泰
+  regime_group: A股
+  sector: 家用电器
+  stop_loss_profile: none
+  symbol: '159996'
+  theme: 家用电器
+  tracking_index: '930697'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 创新药ETF银华
+  regime_group: A股
+  sector: 医药
+  stop_loss_profile: atr_2_5
+  symbol: '159992'
+  theme: CS创新药
+  tracking_index: '931152'
+  volatility_group: high_vol
+- category: sector
+  market: A股
+  name: 证券ETF国泰
+  regime_group: A股
+  sector: 非银金融
+  stop_loss_profile: none
+  symbol: '512880'
+  theme: 证券公司
+  tracking_index: '399975'
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 消费ETF招商
+  regime_group: A股
+  sector: 消费
+  stop_loss_profile: none
+  symbol: '510150'
+  theme: 消费80
+  tracking_index: 000069
+  volatility_group: low_vol
+- category: sector
+  market: A股
+  name: 军工ETF国泰
+  regime_group: A股
+  sector: 国防军工
+  stop_loss_profile: atr_2_5
+  symbol: '512660'
+  theme: 中证军工
+  tracking_index: '399967'
+  volatility_group: high_vol
+market:
+  indices:
+  - akshare_symbol: sh000001
+    baostock_code: sh.000001
+    code: '000001'
+    name: 上证指数
+    source: baostock
+    weight: 1.5
+  - akshare_symbol: sh000300
+    baostock_code: sh.000300
+    code: '000300'
+    name: 沪深300
+    source: baostock
+    weight: 1.5
+  - akshare_symbol: sh000905
+    baostock_code: sh.000905
+    code: 000905
+    name: 中证500
+    source: baostock
+    weight: 1.0
+  - akshare_symbol: sh000852
+    baostock_code: sh.000852
+    code: 000852
+    name: 中证1000
+    source: baostock
+    weight: 1.0
+  - akshare_symbol: sz399006
+    baostock_code: sz.399006
+    code: '399006'
+    name: 创业板指
+    source: baostock
+    weight: 1.0
+  - akshare_symbol: sh000688
+    baostock_code: sh.000688
+    code: 000688
+    name: 科创50
+    source: akshare
+    weight: 1.0
+  - akshare_symbol: .NDX
+    code: NDX
+    name: 纳指100
+    source: akshare_us
+    weight: 0.0
+  - akshare_symbol: HSTECH
+    code: HZ5017
+    name: 恒生科技指数
+    source: tushare_global
+    tushare_code: HKTECH
+    weight: 0.0
+  regime:
+    cold_ratio: 0.6
+    cold_score: -0.55
+    enabled: true
+    hot_ratio: 0.6
+    hot_score: 0.55
+    lookback_days: 180
+    min_indices: 4
+risk_control:
+  rules:
+  - params:
+      days: 90
+    type: max_holding_days
+  - params:
+      default_profile: fixed_8
+    type: profile_stop_loss
+scheduler:
+  run_time: 07:00
+  timezone: Asia/Shanghai
 strategy:
-  type: "multi_indicator_scoring"
   params:
-    ma_short: 20
-    ma_long: 60
-    weights:
-      trend: 0.35
-      macd: 0.25
-      rsi: 0.15
-      bb: 0.25
-    thresholds:
-      buy: 50
-      sell: -50
     cooldown_days: 5
     entry_add_budget:
-      entry_ratio: 0.70
       add_steps:
-        - ratio: 0.15
-          require_profit: true
-          min_score: 60
-        - ratio: 0.15
-          require_profit: true
-          min_score: 70
-    volatility_signal_profiles:
-      high_vol:
-        enabled: true
-        kind: "high_vol_balanced"
+      - min_score: 60
+        ratio: 0.15
+        require_profit: true
+      - min_score: 70
+        ratio: 0.15
+        require_profit: true
+      entry_ratio: 0.7
     entry_budget_overrides:
       high_vol:
         enabled: true
-        kind: "quality_tier"
-        strong_score: 65
-        strong_multiplier: 1.00
+        kind: quality_tier
+        medium_multiplier: 0.8
         medium_score: 55
-        medium_multiplier: 0.80
-        weak_multiplier: 0.60
-risk_control:
-  rules:
-    - type: "max_holding_days"
-      params:
-        days: 90
-    - type: "profile_stop_loss"
-      params:
-        default_profile: "fixed_8"
-
-market:
-  indices:
-    - code: "000001"
-      name: "上证指数"
-      baostock_code: "sh.000001"
-      akshare_symbol: "sh000001"
-      source: "baostock"
-      weight: 1.5
-    - code: "000300"
-      name: "沪深300"
-      baostock_code: "sh.000300"
-      akshare_symbol: "sh000300"
-      source: "baostock"
-      weight: 1.5
-    - code: "000905"
-      name: "中证500"
-      baostock_code: "sh.000905"
-      akshare_symbol: "sh000905"
-      source: "baostock"
-      weight: 1.0
-    - code: "000852"
-      name: "中证1000"
-      baostock_code: "sh.000852"
-      akshare_symbol: "sh000852"
-      source: "baostock"
-      weight: 1.0
-    - code: "399006"
-      name: "创业板指"
-      baostock_code: "sz.399006"
-      akshare_symbol: "sz399006"
-      source: "baostock"
-      weight: 1.0
-    - code: "000688"
-      name: "科创50"
-      baostock_code: "sh.000688"
-      akshare_symbol: "sh000688"
-      source: "akshare"
-      weight: 1.0
-
-    # ── 美股指数 ──
-    - code: "NDX"
-      name: "纳指100"
-      akshare_symbol: ".NDX"
-      source: "akshare_us"
-      weight: 0.0   # 仅用于分市场门控，不参与 A 股热度评分
-
-    # ── 港股指数 ──
-    - code: "HZ5017"
-      name: "恒生科技指数"
-      akshare_symbol: "HSTECH"
-      tushare_code: "HKTECH"
-      source: "tushare_global"
-      weight: 0.0   # 仅用于分市场门控，不参与 A 股热度评分
-
-    # ── 中证行业指数（行业门控 + 组合风控行业暴露用）──
-    - code: "399967"
-      name: "中证军工"
-      akshare_symbol: "sz399967"
-      tushare_code: "399967.SZ"
-      source: "akshare"
-      weight: 0.0
-    # 以下指数在 Tushare 和 AKShare（新浪源）上均无数据，保留代码待后续寻找其他数据源。
-    # - code: "H30184"
-    #   name: "中证半导体"
-    #   akshare_symbol: "shH30184"
-    #   tushare_code: "H30184.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    # - code: "930997"
-    #   name: "中证新能源车"
-    #   akshare_symbol: "sh930997"
-    #   tushare_code: "930997.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    # - code: "931079"
-    #   name: "5G通信"
-    #   akshare_symbol: "sh931079"
-    #   tushare_code: "931079.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    - code: "980032"
-      name: "新能电池"
-      akshare_symbol: "sz980032"
-      tushare_code: "980032.SZ"
-      source: "akshare"
-      weight: 0.0
-    # - code: "H30199"
-    #   name: "中证电力"
-    #   akshare_symbol: "shH30199"
-    #   tushare_code: "H30199.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    # - code: "931994"
-    #   name: "电网设备主题"
-    #   akshare_symbol: "sh931994"
-    #   tushare_code: "931994.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    - code: "980022"
-      name: "CNIROBOT"
-      akshare_symbol: "sz980022"
-      tushare_code: "980022.SZ"
-      source: "akshare"
-      weight: 0.0
-    - code: "399971"
-      name: "中证传媒"
-      akshare_symbol: "sz399971"
-      tushare_code: "399971.SZ"
-      source: "akshare"
-      weight: 0.0
-    - code: "000949"
-      name: "中证农业"
-      akshare_symbol: "sh000949"
-      tushare_code: "000949.SH"
-      source: "akshare"
-      weight: 0.0
-    - code: "000813"
-      name: "细分化工"
-      akshare_symbol: "sh000813"
-      tushare_code: "000813.SH"
-      source: "akshare"
-      weight: 0.0
-    - code: "000819"
-      name: "有色金属"
-      akshare_symbol: "sh000819"
-      tushare_code: "000819.SH"
-      source: "akshare"
-      weight: 0.0
-    # - code: "H30198"
-    #   name: "中证油气"
-    #   akshare_symbol: "shH30198"
-    #   tushare_code: "H30198.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    - code: "399998"
-      name: "中证煤炭"
-      akshare_symbol: "sz399998"
-      tushare_code: "399998.SZ"
-      source: "akshare"
-      weight: 0.0
-    # - code: "930606"
-    #   name: "中证钢铁"
-    #   akshare_symbol: "sh930606"
-    #   tushare_code: "930606.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    - code: "399995"
-      name: "基建工程"
-      akshare_symbol: "sz399995"
-      tushare_code: "399995.SZ"
-      source: "akshare"
-      weight: 0.0
-    - code: "399989"
-      name: "中证医疗"
-      akshare_symbol: "sz399989"
-      tushare_code: "399989.SZ"
-      source: "akshare"
-      weight: 0.0
-    # - code: "930697"
-    #   name: "家用电器"
-    #   akshare_symbol: "sh930697"
-    #   tushare_code: "930697.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    # - code: "931152"
-    #   name: "CS创新药"
-    #   akshare_symbol: "sh931152"
-    #   tushare_code: "931152.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-    - code: "399975"
-      name: "证券公司"
-      akshare_symbol: "sz399975"
-      tushare_code: "399975.SZ"
-      source: "akshare"
-      weight: 0.0
-    - code: "000069"
-      name: "消费80"
-      akshare_symbol: "sh000069"
-      tushare_code: "000069.SH"
-      source: "akshare"
-      weight: 0.0
-    # - code: "931151"
-    #   name: "光伏产业"
-    #   akshare_symbol: "sh931151"
-    #   tushare_code: "931151.CI"
-    #   source: "akshare"
-    #   weight: 0.0
-  regime:
-    enabled: true
-    lookback_days: 180
-    min_indices: 4
-    hot_score: 0.55
-    cold_score: -0.55
-    hot_ratio: 0.6
-    cold_ratio: 0.6
-
-data:
-  # LongTermOdds 需要约 3 年交易窗口，1500 日历天提供足够 rolling 冗余。
-  lookback_days: 1500
-
-scheduler:
-  run_time: "07:00"
-  timezone: "Asia/Shanghai"
+        strong_multiplier: 1.0
+        strong_score: 65
+        weak_multiplier: 0.6
+    ma_long: 60
+    ma_short: 20
+    thresholds:
+      buy: 50
+      sell: -50
+    volatility_signal_profiles:
+      high_vol:
+        enabled: true
+        kind: high_vol_balanced
+      low_vol:
+        enabled: false
+    weights:
+      bb: 0.25
+      macd: 0.25
+      rsi: 0.15
+      trend: 0.35
+  type: multi_indicator_scoring

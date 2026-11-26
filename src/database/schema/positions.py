@@ -1,7 +1,8 @@
 """positions 表 ORM 映射。
 
 Table: positions — 用户持仓
-Row example: id=1, code="588000", cost=1.2000, shares=10000, entry_date=2026-03-15
+Row example: id=1, code="588000", cost=1.2000, shares=10000, entry_date=2026-03-16,
+             first_entry_date=2026-03-15, add_count=1
 """
 
 from datetime import date
@@ -22,6 +23,8 @@ class PositionOrm(Base):
     cost = Column[Decimal](Numeric[Decimal](12, 4), nullable=False)
     shares = Column[int](Integer, nullable=False)
     entry_date = Column[date](Date, nullable=False)
+    first_entry_date = Column[date](Date, nullable=False)
+    add_count = Column[int](Integer, nullable=False, default=0)
 
     def to_model(self) -> Position:
         """转换为业务模型。"""
@@ -31,4 +34,6 @@ class PositionOrm(Base):
             cost=float(self.cost),
             shares=self.shares,
             entry_date=self.entry_date,
+            first_entry_date=self.first_entry_date or self.entry_date,
+            add_count=self.add_count or 0,
         )

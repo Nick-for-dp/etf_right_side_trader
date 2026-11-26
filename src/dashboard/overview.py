@@ -47,7 +47,6 @@ def run():
         name = _SYMBOL_TO_NAME.get(symbol, symbol)
         q = quote_repo.find_latest_quote(symbol)
         close = round(q.close, 4) if q else None
-        nav = round(q.nav, 4) if q and q.nav else None
 
         ind_list = indicators_repo.find_by_code_between(
             symbol, t - timedelta(days=5), t
@@ -59,14 +58,10 @@ def run():
         adx = ind_data.get("adx14")
 
         meta = sig.signal_meta or {}
-        trend = meta.get("trend", "")
         score = meta.get("score")
         advice = advice_map.get(symbol)
-        # V2.3 展示评分，V1.x 展示趋势
         if score is not None:
             signal_display = f"{sig.signal} ({score:+.1f})"
-        elif trend:
-            signal_display = f"{sig.signal} ({trend})"
         else:
             signal_display = sig.signal
 
@@ -75,7 +70,6 @@ def run():
             "名称": name,
             "分类": cat,
             "收盘价": f"{close}" if close else "-",
-            "NAV": f"{nav}" if nav else "-",
             "MA20": f"{ma20:.4f}" if ma20 else "-",
             "MA60": f"{ma60:.4f}" if ma60 else "-",
             "RSI": f"{rsi:.1f}" if rsi else "-",

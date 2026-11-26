@@ -1,6 +1,7 @@
 """操作建议生成器：信号 × 持仓 × 门控 → 建议。
 
-v2.4 gate-lite：仅高溢价和极端市场下行状态硬拦截买入类建议。
+优先级：风控 > 市场状态（RISK_OFF）> 加仓冷却 > 阶梯加仓 > 技术信号。
+实盘（daily_runner）与回测（portfolio_backtest）调用同一份实现。
 """
 
 from datetime import date
@@ -25,18 +26,13 @@ _BUY_OVERRIDE = {
     AdviceAction.ADD: AdviceAction.HOLD,
 }
 
-_MARKET_BLOCK_STATES = {
-    MarketState.HOT_FALLING.value,
-    MarketState.BEAR_TREND.value,
-    MarketState.PANIC.value,
-}
+_MARKET_BLOCK_STATES = {MarketState.RISK_OFF.value}
 
 
 def generate_advice(positions: list[dict],
                     signals: pd.DataFrame,
                     current_prices: dict[str, float],
                     risk_signals: dict[str, dict] | None = None,
-                    odds_map: dict[str, dict] | None = None,
                     market_regime: dict | None = None,
                     last_buy_dates: dict[str, date] | None = None,
                     add_counts: dict[str, int] | None = None,
@@ -44,36 +40,27 @@ def generate_advice(positions: list[dict],
                     entry_budget_overrides: dict | None = None,
                     code_volatility_groups: dict[str, str] | None = None,
                     stop_loss_profiles: dict[str, str] | None = None,
-                    add_cooldown_days: int = 0,
-                    use_premium_gate: bool = True,
-                    use_market_gate: bool = True,
-                    use_add_cooldown: bool = True,
-                    use_add_budget: bool = True) -> list[dict]:
-    """交叉持仓、信号与赔率门控，返回操作建议列表。
-
-    优先级：风控 > 高溢价门控 > 极端市场门控 > 加仓冷却 > 技术信号
+                    add_cooldown_days: int = 0) -> list[dict]:
+    """交叉持仓、信号与门控，返回操作建议列表。
 
     Args:
         positions: 持仓列表，每项含 id、code、cost、shares、entry_date
         signals: 信号 DataFrame，columns = [code, date, signal, signal_meta]
         current_prices: {code: close_price} 当前价格映射
-        risk_signals: {code: {"signal": "SELL", "source": "stop_loss"}}，风控覆盖
-        odds_map: {code: {"odds_state": "FAIR", "odds_score": 15.2, "premium_blocked": False}}
-        market_regime: {"state": "NORMAL", "score": 0.1, "data": {...}}
+        risk_signals: {code: {"signal": "SELL", "source": "stop_loss", "reason": ...}}，风控覆盖
+        market_regime: {code: {"state": "NORMAL", "score": 0.1, "data": {...}}} 分市场状态
         last_buy_dates: {code: date} 最近一次真实建仓/加仓日期
-        add_counts: {code: int} 已执行加仓次数
+        add_counts: {code: int} 本轮持仓已完成加仓次数
         entry_add_budget: 70/15/15 等执行预算拆分参数
         entry_budget_overrides: 按波动组调整目标预算的规则
         code_volatility_groups: {code: volatility_group}，用于按波动组应用预算覆盖
         stop_loss_profiles: {code: stop_loss_profile} ETF 止损 profile
         add_cooldown_days: 加仓冷却天数，0 表示不启用
-        use_premium_gate: 是否启用高溢价硬门控
-        use_market_gate: 是否启用 gate-lite 市场门控
-        use_add_cooldown: 是否启用加仓冷却
-        use_add_budget: 是否启用阶梯加仓门控
 
     Returns:
-        操作建议列表，每项含 code、date、position_id、cost、pnl_pct、signal、advice、signal_source
+        操作建议列表，每项含 code、date、position_id、cost、pnl_pct、signal、advice、
+        signal_source、target_budget_ratio、entry_add_step、score、market_state、
+        stop_loss_profile、blocked_reason、advice_meta
 
     Example:
         >>> advices = generate_advice(
@@ -85,7 +72,6 @@ def generate_advice(positions: list[dict],
         '卖出'
     """
     risk_signals = risk_signals or {}
-    odds_map = odds_map or {}
     market_regime = market_regime or {}
     last_buy_dates = last_buy_dates or {}
     add_counts = add_counts or {}
@@ -99,7 +85,6 @@ def generate_advice(positions: list[dict],
     for _, row in signals.iterrows():
         code = row["code"]
         has_pos = code in pos_map
-        odds = odds_map.get(code, {})
         signal_meta = row.get("signal_meta", {}) or {}
         score = _to_float(signal_meta.get("score"))
         regime_for_code = _regime_for_code(code, market_regime)
@@ -119,7 +104,6 @@ def generate_advice(positions: list[dict],
                 final_advice=advice,
                 has_position=True,
                 signal_meta=signal_meta,
-                odds=odds,
                 market_regime=regime_for_code,
                 add_count=add_count,
                 budget=entry_add_budget,
@@ -153,28 +137,15 @@ def generate_advice(positions: list[dict],
         signal_source = SignalSource.TREND
         blocked_reason = None
 
-        # ── 优先级 2：高溢价硬门控 ──
-        # gate-lite 不再因 EXPENSIVE 赔率状态硬拦截买入；只保留高溢价硬过滤。
-        premium_blocked = odds.get("premium_blocked", False)
-        if use_premium_gate and advice in _BUY_OVERRIDE and premium_blocked:
+        # ── 优先级 2：市场状态门控（按 ETF 的 regime_group 区分市场）──
+        if advice in _BUY_OVERRIDE and market_state in _MARKET_BLOCK_STATES:
             advice = _BUY_OVERRIDE[advice]
-            blocked_reason = "premium_blocked"
+            signal_source = SignalSource.MARKET_REGIME
+            blocked_reason = f"market_regime:{market_state}"
 
-        # ── 优先级 3：极端市场门控（gate-lite）──
-        # 支持按 ETF 的 regime_group 区分市场。
-        # market_regime 可以是：
-        #   - 单个 dict（全局统一，向后兼容）
-        #   - dict of {code: {"state": ...}}（每个 ETF 对应各自市场状态）
-        # 只拦截 HOT_FALLING / BEAR_TREND / PANIC。
-        if use_market_gate and advice in _BUY_OVERRIDE:
-            if market_state in _MARKET_BLOCK_STATES:
-                advice = _BUY_OVERRIDE[advice]
-                signal_source = SignalSource.MARKET_REGIME
-                blocked_reason = f"market_regime:{market_state}"
-
-        # ── 优先级 4：加仓冷却 ──
+        # ── 优先级 3：加仓冷却 ──
         # 只限制加仓频率，不影响建仓、SELL、HOLD 和风控覆盖。
-        if use_add_cooldown and advice == AdviceAction.ADD and add_cooldown_days > 0:
+        if advice == AdviceAction.ADD and add_cooldown_days > 0:
             last_buy_date = last_buy_dates.get(code)
             signal_date = _parse_date(row["date"])
             if last_buy_date is not None and signal_date is not None:
@@ -186,9 +157,8 @@ def generate_advice(positions: list[dict],
                         f"add_cooldown:{days_since_buy}/{add_cooldown_days}"
                     )
 
-        # ── 优先级 5：70/15/15 阶梯加仓门控 ──
-        # 只限制加仓建议；建仓比例和具体金额由人工执行层按预算口径处理。
-        if use_add_budget and advice == AdviceAction.ADD:
+        # ── 优先级 4：70/15/15 阶梯加仓门控 ──
+        if advice == AdviceAction.ADD:
             pos = pos_map.get(code)
             current_price = current_prices.get(code)
             allowed, reason = _add_budget_check(
@@ -215,17 +185,11 @@ def generate_advice(positions: list[dict],
             signal_meta=signal_meta,
             budget_override_rule=budget_override_rule,
         )
-        if advice not in (AdviceAction.OPEN, AdviceAction.ADD) and raw_advice not in (
-            AdviceAction.OPEN,
-            AdviceAction.ADD,
-        ):
-            budget_plan = {}
         advice_meta = _build_advice_meta(
             raw_advice=raw_advice,
             final_advice=advice,
             has_position=has_pos,
             signal_meta=signal_meta,
-            odds=odds,
             market_regime=regime_for_code,
             add_count=add_count,
             budget=entry_add_budget,
@@ -235,47 +199,30 @@ def generate_advice(positions: list[dict],
             budget_plan=budget_plan,
         )
 
-        if has_pos:
-            pos = pos_map[code]
-            price = current_prices.get(code)
-            pnl_pct = (price - pos["cost"]) / pos["cost"] if price else None
-            results.append({
-                "code": code,
-                "date": str(row["date"]),
-                "position_id": pos["id"],
-                "cost": pos["cost"],
-                "pnl_pct": round(pnl_pct, 6) if pnl_pct is not None else None,
-                "signal": signal.value,
-                "advice": advice.value,
-                "signal_source": signal_source.value,
-                "target_position_ratio": budget_plan.get("target_position_ratio"),
-                "target_budget_ratio": budget_plan.get("target_budget_ratio"),
-                "entry_add_step": budget_plan.get("entry_add_step"),
-                "score": score,
-                "market_state": market_state,
-                "stop_loss_profile": stop_loss_profile,
-                "blocked_reason": blocked_reason,
-                "advice_meta": advice_meta,
-            })
-        else:
-            results.append({
-                "code": code,
-                "date": str(row["date"]),
-                "position_id": None,
-                "cost": None,
-                "pnl_pct": None,
-                "signal": signal.value,
-                "advice": advice.value,
-                "signal_source": signal_source.value,
-                "target_position_ratio": budget_plan.get("target_position_ratio"),
-                "target_budget_ratio": budget_plan.get("target_budget_ratio"),
-                "entry_add_step": budget_plan.get("entry_add_step"),
-                "score": score,
-                "market_state": market_state,
-                "stop_loss_profile": stop_loss_profile,
-                "blocked_reason": blocked_reason,
-                "advice_meta": advice_meta,
-            })
+        pos = pos_map.get(code)
+        price = current_prices.get(code)
+        pnl_pct = None
+        if pos is not None and price:
+            pnl_pct = round((price - pos["cost"]) / pos["cost"], 6)
+
+        results.append({
+            "code": code,
+            "date": str(row["date"]),
+            "position_id": pos["id"] if pos is not None else None,
+            "cost": pos["cost"] if pos is not None else None,
+            "pnl_pct": pnl_pct,
+            "signal": signal.value,
+            "advice": advice.value,
+            "signal_source": signal_source.value,
+            "target_position_ratio": budget_plan.get("target_position_ratio"),
+            "target_budget_ratio": budget_plan.get("target_budget_ratio"),
+            "entry_add_step": budget_plan.get("entry_add_step"),
+            "score": score,
+            "market_state": market_state,
+            "stop_loss_profile": stop_loss_profile,
+            "blocked_reason": blocked_reason,
+            "advice_meta": advice_meta,
+        })
 
     return results
 
@@ -406,7 +353,6 @@ def _build_advice_meta(
     final_advice: AdviceAction,
     has_position: bool,
     signal_meta: dict,
-    odds: dict,
     market_regime: dict,
     add_count: int,
     budget: dict,
@@ -417,8 +363,6 @@ def _build_advice_meta(
     risk_reason: str | None = None,
 ) -> dict:
     """Build JSON metadata used by Dashboard explanations."""
-    entry_ratio = _to_float(budget.get("entry_ratio"))
-    add_steps = budget.get("add_steps", [])
     return {
         "raw_advice": raw_advice.value,
         "final_advice": final_advice.value,
@@ -427,38 +371,17 @@ def _build_advice_meta(
         "signal_meta": signal_meta,
         "market_state": market_regime.get("state", "NORMAL"),
         "market_score": market_regime.get("score"),
-        "odds_state": odds.get("odds_state"),
-        "odds_score": odds.get("odds_score"),
-        "premium_blocked": odds.get("premium_blocked", False),
         "stop_loss_profile": stop_loss_profile,
         "add_count": add_count,
         "entry_add_budget": {
-            "entry_ratio": entry_ratio,
-            "add_steps": add_steps,
+            "entry_ratio": _to_float(budget.get("entry_ratio")),
+            "add_steps": budget.get("add_steps", []),
         },
         "entry_budget_override": budget_override_rule or {},
         "budget_plan": budget_plan or {},
         "blocked_reason": blocked_reason,
         "risk_reason": risk_reason,
     }
-
-
-def _add_budget_allows(
-    position: dict | None,
-    current_price: float | None,
-    signal_meta: dict,
-    add_count: int,
-    budget: dict,
-) -> bool:
-    """Return whether the next configured add step is allowed."""
-    allowed, _reason = _add_budget_check(
-        position=position,
-        current_price=current_price,
-        signal_meta=signal_meta,
-        add_count=add_count,
-        budget=budget,
-    )
-    return allowed
 
 
 def _add_budget_check(

@@ -36,7 +36,6 @@ class SignalSource(StrEnum):
 
     TREND = "trend"
     STOP_LOSS = "stop_loss"
-    TRAILING_STOP = "trailing_stop"
     MAX_HOLDING = "max_holding"
     ADD_COOLDOWN = "add_cooldown"
     ADD_BUDGET = "add_budget"
@@ -44,23 +43,16 @@ class SignalSource(StrEnum):
 
 
 class MarketState(StrEnum):
-    """市场热度状态。
+    """市场状态（三态）。
 
-    基础状态：COLD / NORMAL / HOT / UNKNOWN（基于涨跌幅+均线+RSI+成交额）
-    细分状态（用于 advisor 精细门控）：
-      - HOT_RISING:  过热但仍在上涨 → 降级为观望
-      - HOT_FALLING: 过热且开始回落 → 严格拦截买入
-      - BEAR_TREND:  过冷且趋势向下 → 拦截建仓加仓
-      - PANIC:       恐慌低位（RSI 极低+放量）→ 拦截，提示人工观察
-      - RECOVERY:    超卖后企稳反弹 → 允许小仓建仓
+    RISK_OFF: 风险关闭，拦截建仓/加仓
+    NORMAL:   正常交易
+    UNKNOWN:  指数数据不足，不做拦截
+
+    细分原因（过热回落 / 下跌趋势 / 恐慌 / 过热上涨 / 超卖反弹）
+    保存在 market_regime.data.reason，不进入状态枚举。
     """
 
-    COLD = "COLD"
+    RISK_OFF = "RISK_OFF"
     NORMAL = "NORMAL"
-    HOT = "HOT"
-    HOT_RISING = "HOT_RISING"
-    HOT_FALLING = "HOT_FALLING"
-    BEAR_TREND = "BEAR_TREND"
-    PANIC = "PANIC"
-    RECOVERY = "RECOVERY"
     UNKNOWN = "UNKNOWN"

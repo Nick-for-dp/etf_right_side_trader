@@ -216,14 +216,12 @@ class HistoryFetcher:
             - date:           交易日期
             - open/high/low/close: 前复权 OHLC
             - volume:         成交量（手）
-            - nav:            单位净值（Tushare 不支持，恒为 None）
-            - premium_rate:   溢价率（Tushare 不支持，恒为 None）
 
         Example:
             >>> fetcher = HistoryFetcher()
             >>> df = fetcher.get_etf_history_from_tushare("510050", "20200101", "20241231")
             >>> print(df.columns.tolist())
-            ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'nav', 'premium_rate']
+            ['code', 'date', 'open', 'high', 'low', 'close', 'volume']
         """
 
         # ── step 1: 补全交易所后缀，转换为 Tushare ts_code 格式 ──
@@ -289,13 +287,10 @@ class HistoryFetcher:
         # 转为 Python date 对象，Quote(**row) 时无需额外转换
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d").dt.date
         df["code"] = symbol           # 还原为 6 位代码
-        df["nav"] = None              # Tushare 不提供完整的净值，后续可从其他源补
-        df["premium_rate"] = None     # 无 nav 则无法计算溢价率
 
         logger.info(
             f"成功获取 {symbol} {start_date} ~ {end_date} 的历史行情 "
             f"（Tushare，前复权），共 {len(df)} 条记录。"
         )
 
-        return df[["code", "date", "open", "high", "low", "close",
-                    "volume", "nav", "premium_rate"]]
+        return df[["code", "date", "open", "high", "low", "close", "volume"]]

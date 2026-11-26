@@ -1,4 +1,9 @@
-"""市场热度状态计算服务。"""
+"""市场状态计算服务。
+
+三态：RISK_OFF（拦截买入）/ NORMAL / UNKNOWN（数据不足，不拦截）。
+细分原因（hot_rising / hot_falling / bear_trend / panic / recovery）
+写入 market_regime.data.reason，仅作解释，不参与门控。
+"""
 
 from datetime import date, timedelta
 
@@ -17,22 +22,33 @@ _REGIME_GROUP_INDEX_CODE = {
     "港股": "HZ5017",
 }
 
+# 细分原因 → 三态
+_RISK_OFF_REASONS = {"hot_falling", "bear_trend", "panic"}
+_REASON_STATE = {
+    "hot_rising": MarketState.NORMAL,
+    "hot_falling": MarketState.RISK_OFF,
+    "bear_trend": MarketState.RISK_OFF,
+    "panic": MarketState.RISK_OFF,
+    "recovery": MarketState.NORMAL,
+    "normal": MarketState.NORMAL,
+}
+
 
 class MarketRegimeService:
-    """基于宽基指数日线计算全市场热度状态。"""
+    """基于宽基指数日线计算全市场状态。"""
 
     def __init__(self, indices: list[MarketIndexItem], params: dict | None = None):
         self.indices = indices
         self.params = params or {}
 
     def calculate_and_save(self, target_date: date) -> MarketRegime:
-        """计算并保存指定日期的市场热度状态。"""
+        """计算并保存指定日期的市场状态。"""
         regime = self.calculate(target_date)
         market_regime_repo.save(regime)
         return regime
 
     def calculate(self, target_date: date) -> MarketRegime:
-        """计算指定日期的市场热度状态，不写数据库。"""
+        """计算指定日期的市场状态，不写数据库。"""
         lookback_days = self.params.get("lookback_days", 180)
         fetch_start = target_date - timedelta(days=lookback_days)
 
@@ -53,47 +69,32 @@ def _aggregate_index_results(
     target_date: date,
     params: dict | None = None,
 ) -> MarketRegime:
-    """聚合指数评分，并把 HOT/COLD 细分为 gate-lite 可用状态。"""
+    """聚合指数评分（HOT/COLD/NORMAL 为单指数热度标签），得到三态市场状态。"""
     params = params or {}
     scoring_results = [item for item in index_results if item["weight"] > 0]
 
     min_indices = params.get("min_indices", 4)
     if len(scoring_results) < min_indices:
-        return MarketRegime(
-            date=target_date,
-            state=MarketState.UNKNOWN.value,
-            score=None,
-            data={
-                "reason": "insufficient_index_data",
-                "valid_indices": len(scoring_results),
-                "observed_indices": len(index_results),
-                "min_indices": min_indices,
-                "indices": index_results,
-            },
+        return _unknown_regime(
+            target_date, "insufficient_index_data", index_results,
+            valid_indices=len(scoring_results), min_indices=min_indices,
         )
 
     total_weight = sum(item["weight"] for item in scoring_results)
     if total_weight <= 0:
-        return MarketRegime(
-            date=target_date,
-            state=MarketState.UNKNOWN.value,
-            score=None,
-            data={
-                "reason": "no_positive_index_weight",
-                "valid_indices": len(scoring_results),
-                "observed_indices": len(index_results),
-                "indices": index_results,
-            },
+        return _unknown_regime(
+            target_date, "no_positive_index_weight", index_results,
+            valid_indices=len(scoring_results),
         )
 
     score = sum(item["score"] * item["weight"] for item in scoring_results) / total_weight
     hot_weight = sum(
         item["weight"] for item in scoring_results
-        if item["state"] == MarketState.HOT.value
+        if item["state"] == "HOT"
     )
     cold_weight = sum(
         item["weight"] for item in scoring_results
-        if item["state"] == MarketState.COLD.value
+        if item["state"] == "COLD"
     )
 
     hot_score = params.get("hot_score", 0.55)
@@ -102,19 +103,21 @@ def _aggregate_index_results(
     cold_ratio = params.get("cold_ratio", 0.5)
 
     if score >= hot_score and hot_weight / total_weight >= hot_ratio:
-        base_state = MarketState.HOT
+        base_state = "HOT"
     elif score <= cold_score and cold_weight / total_weight >= cold_ratio:
-        base_state = MarketState.COLD
+        base_state = "COLD"
     else:
-        base_state = MarketState.NORMAL
+        base_state = "NORMAL"
 
-    state = _refine_market_state(base_state, scoring_results)
+    reason = _refine_reason(base_state, scoring_results)
+    state = _REASON_STATE[reason]
 
     return MarketRegime(
         date=target_date,
         state=state.value,
         score=round(score, 4),
         data={
+            "reason": reason,
             "hot_weight_ratio": round(hot_weight / total_weight, 4),
             "cold_weight_ratio": round(cold_weight / total_weight, 4),
             "valid_indices": len(scoring_results),
@@ -124,17 +127,33 @@ def _aggregate_index_results(
     )
 
 
-def _refine_market_state(base_state: MarketState, scoring_results: list[dict]) -> MarketState:
-    """根据短期趋势方向和极端指标细分 HOT/COLD 状态。"""
-    if base_state == MarketState.HOT:
+def _unknown_regime(
+    target_date: date, reason: str, index_results: list[dict], **extra
+) -> MarketRegime:
+    return MarketRegime(
+        date=target_date,
+        state=MarketState.UNKNOWN.value,
+        score=None,
+        data={
+            "reason": reason,
+            "observed_indices": len(index_results),
+            "indices": index_results,
+            **extra,
+        },
+    )
+
+
+def _refine_reason(base_state: str, scoring_results: list[dict]) -> str:
+    """根据短期趋势方向和极端指标细分 HOT/COLD 的原因。"""
+    if base_state == "HOT":
         recent_returns = [
             item["ret5"] for item in scoring_results
             if item.get("ret5") is not None
         ]
         avg_5d_return = sum(recent_returns) / len(recent_returns) if recent_returns else 0
-        return MarketState.HOT_RISING if avg_5d_return > 0 else MarketState.HOT_FALLING
+        return "hot_rising" if avg_5d_return > 0 else "hot_falling"
 
-    if base_state == MarketState.COLD:
+    if base_state == "COLD":
         max_rsi = None
         for item in scoring_results:
             rsi = item.get("rsi")
@@ -148,12 +167,12 @@ def _refine_market_state(base_state: MarketState, scoring_results: list[dict]) -
                 min_gap = gap
 
         if min_gap is not None and min_gap > -0.01:
-            return MarketState.RECOVERY
+            return "recovery"
         if max_rsi is not None and max_rsi < 20:
-            return MarketState.PANIC
-        return MarketState.BEAR_TREND
+            return "panic"
+        return "bear_trend"
 
-    return base_state
+    return "normal"
 
 
 def _calculate_index_state(
@@ -216,16 +235,16 @@ def _calculate_index_state(
     )
 
     if score >= 0.55:
-        state = MarketState.HOT
+        state = "HOT"
     elif score <= -0.55:
-        state = MarketState.COLD
+        state = "COLD"
     else:
-        state = MarketState.NORMAL
+        state = "NORMAL"
 
     return {
         "code": index.code,
         "name": index.name,
-        "state": state.value,
+        "state": state,
         "score": round(float(score), 4),
         "weight": index.weight,
         "ret5": round(float(ret5), 6) if pd.notna(ret5) else None,

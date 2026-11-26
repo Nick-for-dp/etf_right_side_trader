@@ -55,10 +55,8 @@ uv run python main.py schedule                    # 定时调度
 uv run python main.py check-data                  # 数据健康检查，异常时非零退出
 uv run python main.py rebuild-signals --start 2024-06-01 --end 2026-12-31
 uv run python main.py backtest-portfolio --start 2016-01-01 --end 2026-12-31 --capital 100000 --cost 0.0005 --slippage 0.0001
-uv run python main.py backtest-attribution        # 市场门控归因
 uv run python main.py backtest-misjudge           # 亏损交易归因
-uv run python main.py backtest-stop-loss          # 止损事件归因
-uv run python main.py backtest-etf-tiers          # ETF A/B/C 分层
+uv run python main.py backtest-stop-loss          # 止损事件与止损后走势
 uv run pytest -q
 ```
 

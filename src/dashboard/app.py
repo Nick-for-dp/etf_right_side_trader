@@ -41,7 +41,6 @@ def main():
         st.Page("positions.py", title="我的持仓", icon="💼"),
         st.Page("detail.py", title="ETF 详情", icon="🔍"),
         st.Page("pnl.py", title="盈亏分析", icon="💰"),
-        st.Page("comparison.py", title="策略对比", icon="⚖️"),
     ])
     pages.run()
 
