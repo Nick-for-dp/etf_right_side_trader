@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 _VALID_STRATEGY_TYPES = {"ma_cross", "ma_cross_macd", "multi_indicator_scoring"}
 _VALID_DB_DRIVERS = {"postgresql", "mysql"}
 _VALID_VOLATILITY_GROUPS = {"high_vol", "low_vol", "unknown_vol"}
+_VALID_SIGNAL_PROFILE_KINDS = {"high_vol_balanced", "relaxed_default"}
+_VALID_ENTRY_BUDGET_OVERRIDE_KINDS = {"quality_tier"}
 _VALID_STOP_LOSS_PROFILES = {
     "none",
     "fixed_6",
@@ -271,6 +273,12 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
                     {"ratio": 0.15, "require_profit": True, "min_score": 70},
                 ],
             }),
+            "volatility_signal_profiles": _validate_volatility_signal_profiles(
+                params.get("volatility_signal_profiles", {})
+            ),
+            "entry_budget_overrides": _validate_entry_budget_overrides(
+                params.get("entry_budget_overrides", {})
+            ),
         }
         cooldown_days = params["cooldown_days"]
         if not isinstance(cooldown_days, int) or cooldown_days < 0:
@@ -279,6 +287,86 @@ def _validate_strategy(raw: dict) -> tuple[str, dict]:
             )
         _validate_entry_add_budget(params["entry_add_budget"])
     return stype, params
+
+
+def _validate_volatility_signal_profiles(raw: dict) -> dict:
+    """Validate volatility-scoped production signal profiles."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("strategy.params.volatility_signal_profiles 需为 dict")
+    result = {}
+    for group, profile in raw.items():
+        if group not in _VALID_VOLATILITY_GROUPS:
+            raise ValueError(f"volatility_signal_profiles.{group} 不是有效波动组")
+        if not isinstance(profile, dict):
+            raise ValueError(f"volatility_signal_profiles.{group} 需为 dict")
+        enabled = profile.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"volatility_signal_profiles.{group}.enabled 需为 bool")
+        kind = profile.get("kind")
+        if enabled and kind not in _VALID_SIGNAL_PROFILE_KINDS:
+            raise ValueError(
+                f"volatility_signal_profiles.{group}.kind 无效: {kind}，"
+                f"仅支持 {_VALID_SIGNAL_PROFILE_KINDS}"
+            )
+        result[group] = {
+            "enabled": enabled,
+            "kind": kind,
+            "params": profile.get("params", {}) or {},
+        }
+    return result
+
+
+def _validate_entry_budget_overrides(raw: dict) -> dict:
+    """Validate volatility-scoped target-budget override rules."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("strategy.params.entry_budget_overrides 需为 dict")
+    result = {}
+    for group, rule in raw.items():
+        if group not in _VALID_VOLATILITY_GROUPS:
+            raise ValueError(f"entry_budget_overrides.{group} 不是有效波动组")
+        if not isinstance(rule, dict):
+            raise ValueError(f"entry_budget_overrides.{group} 需为 dict")
+        enabled = rule.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"entry_budget_overrides.{group}.enabled 需为 bool")
+        kind = rule.get("kind")
+        if enabled and kind not in _VALID_ENTRY_BUDGET_OVERRIDE_KINDS:
+            raise ValueError(
+                f"entry_budget_overrides.{group}.kind 无效: {kind}，"
+                f"仅支持 {_VALID_ENTRY_BUDGET_OVERRIDE_KINDS}"
+            )
+        medium_score = _numeric_or_default(rule, "medium_score", 55.0)
+        strong_score = _numeric_or_default(rule, "strong_score", 65.0)
+        if medium_score >= strong_score:
+            raise ValueError(f"entry_budget_overrides.{group} 要求 medium_score < strong_score")
+        result[group] = {
+            "enabled": enabled,
+            "kind": kind,
+            "medium_score": medium_score,
+            "medium_multiplier": _ratio_or_default(rule, "medium_multiplier", 0.80),
+            "strong_score": strong_score,
+            "strong_multiplier": _ratio_or_default(rule, "strong_multiplier", 1.0),
+            "weak_multiplier": _ratio_or_default(rule, "weak_multiplier", 0.60),
+        }
+    return result
+
+
+def _numeric_or_default(raw: dict, key: str, default: float) -> float:
+    value = raw.get(key, default)
+    if not isinstance(value, (int, float)):
+        raise ValueError(f"{key} 需为数字")
+    return float(value)
+
+
+def _ratio_or_default(raw: dict, key: str, default: float) -> float:
+    value = _numeric_or_default(raw, key, default)
+    if not 0 < value <= 1:
+        raise ValueError(f"{key} 需在 (0, 1]，实际: {value}")
+    return value
 
 
 def _validate_entry_add_budget(raw: dict) -> None:

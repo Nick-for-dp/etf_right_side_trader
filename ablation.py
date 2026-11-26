@@ -8,6 +8,18 @@
     python ablation.py --matrix stop-loss-by-segment --start 2016-01-01
     python ablation.py --matrix candidate-comparison
     python ablation.py --matrix relative-strength --start 2016-01-01
+    python ablation.py --matrix volatility-strategy --start 2016-01-01
+    python ablation.py --matrix volatility-profile-strategy --start 2016-01-01
+    python ablation.py --matrix high-vol-mixed-strategy
+    python ablation.py --matrix high-vol-frequency-control
+    python ablation.py --matrix high-vol-quality-control
+    python ablation.py --matrix high-vol-quality-tier-robustness
+    python ablation.py --matrix high-vol-quality-capital-attribution
+    python ablation.py --matrix volatility-focus-anchor
+    python ablation.py --matrix volatility-profile-validation
+    python ablation.py --matrix portfolio-risk-control
+    python ablation.py --matrix stop-loss-attribution
+    python ablation.py --matrix etf-tier-classification
 """
 
 import argparse
@@ -58,13 +70,32 @@ def main() -> None:
             "high-vol-reentry-cooldown",
             "high-vol-reentry-stop-price",
             "relative-strength",
+            "volatility-strategy",
+            "volatility-profile-strategy",
+            "high-vol-mixed-strategy",
+            "high-vol-frequency-control",
+            "high-vol-quality-control",
+            "high-vol-quality-tier-robustness",
+            "high-vol-quality-capital-attribution",
+            "volatility-focus-anchor",
+            "volatility-profile-validation",
+            "portfolio-risk-control",
+            "stop-loss-attribution",
+            "etf-tier-classification",
         ],
         help=(
             "消融实验集：default、preferred-cycle、add-rules、"
             "entry-add-budget、stop-loss-rules、stop-loss-by-segment、"
             "candidate-comparison、reentry-rules、trend-reentry-segments、"
             "high-vol-reentry-cooldown、high-vol-reentry-stop-price "
-            "或 relative-strength，默认 default"
+            "relative-strength、volatility-strategy 或 "
+            "volatility-profile-strategy、high-vol-mixed-strategy、"
+            "high-vol-frequency-control、high-vol-quality-control、"
+            "high-vol-quality-tier-robustness、"
+            "high-vol-quality-capital-attribution、volatility-focus-anchor、"
+            "volatility-profile-validation、"
+            "portfolio-risk-control、stop-loss-attribution、"
+            "etf-tier-classification，默认 default"
         ),
     )
 
@@ -92,6 +123,54 @@ def main() -> None:
         format_relative_strength_report,
         run_relative_strength_backtest,
     )
+    from src.backtest.volatility_strategy_report import (
+        format_volatility_strategy_report,
+        run_volatility_strategy_backtest,
+    )
+    from src.backtest.volatility_profile_strategy_report import (
+        format_volatility_profile_strategy_report,
+        run_volatility_profile_strategy_backtest,
+    )
+    from src.backtest.high_vol_mixed_strategy_report import (
+        format_high_vol_mixed_strategy_report,
+        run_high_vol_mixed_strategy_backtest,
+    )
+    from src.backtest.high_vol_frequency_control_report import (
+        format_high_vol_frequency_control_report,
+        run_high_vol_frequency_control_backtest,
+    )
+    from src.backtest.high_vol_quality_control_report import (
+        format_high_vol_quality_control_report,
+        run_high_vol_quality_control_backtest,
+    )
+    from src.backtest.high_vol_quality_tier_robustness_report import (
+        format_high_vol_quality_tier_robustness_report,
+        run_high_vol_quality_tier_robustness_backtest,
+    )
+    from src.backtest.high_vol_quality_capital_attribution_report import (
+        format_high_vol_quality_capital_attribution_report,
+        run_high_vol_quality_capital_attribution_backtest,
+    )
+    from src.backtest.volatility_focus_anchor_report import (
+        format_volatility_focus_anchor_report,
+        run_volatility_focus_anchor_backtest,
+    )
+    from src.backtest.volatility_profile_validation_report import (
+        format_volatility_profile_validation_report,
+        run_volatility_profile_validation_backtest,
+    )
+    from src.backtest.portfolio_risk_control_report import (
+        format_portfolio_risk_control_report,
+        run_portfolio_risk_control_backtest,
+    )
+    from src.backtest.stop_loss_attribution_report import (
+        format_stop_loss_attribution_report,
+        run_stop_loss_attribution_backtest,
+    )
+    from src.backtest.etf_tier_classification_report import (
+        format_etf_tier_classification_report,
+        run_etf_tier_classification_backtest,
+    )
 
     config = load_config()
     init_engine(config.db_url)
@@ -110,6 +189,117 @@ def main() -> None:
                 slippage=args.slippage,
             )
             print(format_relative_strength_report(result))
+        elif args.matrix == "volatility-strategy":
+            result = run_volatility_strategy_backtest(
+                codes=codes,
+                start=start_date,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_volatility_strategy_report(result))
+        elif args.matrix == "volatility-profile-strategy":
+            result = run_volatility_profile_strategy_backtest(
+                codes=codes,
+                start=start_date,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_volatility_profile_strategy_report(result))
+        elif args.matrix == "high-vol-mixed-strategy":
+            result = run_high_vol_mixed_strategy_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_high_vol_mixed_strategy_report(result))
+        elif args.matrix == "high-vol-frequency-control":
+            result = run_high_vol_frequency_control_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_high_vol_frequency_control_report(result))
+        elif args.matrix == "high-vol-quality-control":
+            result = run_high_vol_quality_control_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_high_vol_quality_control_report(result))
+        elif args.matrix == "high-vol-quality-tier-robustness":
+            result = run_high_vol_quality_tier_robustness_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_high_vol_quality_tier_robustness_report(result))
+        elif args.matrix == "high-vol-quality-capital-attribution":
+            result = run_high_vol_quality_capital_attribution_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_high_vol_quality_capital_attribution_report(result))
+        elif args.matrix == "volatility-focus-anchor":
+            result = run_volatility_focus_anchor_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_volatility_focus_anchor_report(result))
+        elif args.matrix == "volatility-profile-validation":
+            result = run_volatility_profile_validation_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_volatility_profile_validation_report(result))
+        elif args.matrix == "portfolio-risk-control":
+            result = run_portfolio_risk_control_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_portfolio_risk_control_report(result))
+        elif args.matrix == "stop-loss-attribution":
+            result = run_stop_loss_attribution_backtest(
+                codes=codes,
+                start=start_date,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_stop_loss_attribution_report(result))
+        elif args.matrix == "etf-tier-classification":
+            result = run_etf_tier_classification_backtest(
+                codes=codes,
+                end=end_date,
+                capital=args.capital,
+                cost_ratio=args.cost,
+                slippage=args.slippage,
+            )
+            print(format_etf_tier_classification_report(result))
         elif args.matrix == "stop-loss-by-segment":
             result = run_segmented_stop_loss_backtest(
                 codes=codes,

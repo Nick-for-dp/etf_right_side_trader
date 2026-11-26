@@ -38,9 +38,15 @@ def create_strategy(config: AppConfig) -> BaseStrategy:
 
     if stype == "multi_indicator_scoring":
         from src.strategy.multi_indicator_scoring import MultiIndicatorScoring
+        code_volatility_groups = {
+            item.symbol: item.volatility_group
+            for item in config.etf_list
+        }
         return MultiIndicatorScoring(
             weights=params["weights"],
             thresholds=params["thresholds"],
+            volatility_signal_profiles=params.get("volatility_signal_profiles", {}),
+            code_volatility_groups=code_volatility_groups,
         )
 
     raise ValueError(f"Unsupported strategy type: {stype}")

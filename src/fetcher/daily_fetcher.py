@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from .base import BaseFetcher
+from .baostock_session import BaoStockUnavailable, baostock_session
 from src.utils import get_logger, rate_limit, retry_on_error
 
 
@@ -115,46 +116,47 @@ class DailyFetcher(BaseFetcher):
             包含 trade_date/symbol/open_px/high_px/low_px/close_px/volume 等列的 DataFrame，
             无数据时返回 None
         """
-        lg = bs.login()
-        if lg.error_code != self.GOOD_STATUS_CODE:
-            logger.error(f"登录 BaoStock 失败， 错误码: {lg.error_code}, 错误信息: {lg.error_msg}")
+        try:
+            with baostock_session():
+                # 根据ETF编码开头数字判断市场，目前只支持A股市场
+                market_label = "sz" if symbol.startswith("1") else "sh"
+
+                bs_raw_data = bs.query_history_k_data_plus(
+                    code=f"{market_label}.{symbol}",
+                    fields=fields,
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency="d",
+                    adjustflag="2"  # 默认前复权
+                )
+
+                if bs_raw_data.error_code != self.GOOD_STATUS_CODE:
+                    raise BaoStockUnavailable(
+                        f"查询失败: {bs_raw_data.error_code} {bs_raw_data.error_msg}"
+                    )
+
+                data_list = []
+                while (bs_raw_data.error_code == self.GOOD_STATUS_CODE) and bs_raw_data.next():
+                    row_data = bs_raw_data.get_row_data()
+                    data = {
+                        "trade_date": row_data[0],
+                        "symbol": symbol,
+                        "open_px": float(row_data[2]),
+                        "high_px": float(row_data[3]),
+                        "low_px": float(row_data[4]),
+                        "close_px": float(row_data[5]),
+                        "volume": int(float(row_data[6]) / 100),  # baostock提供的单位是股，转换为手
+                        "amount": float(row_data[7]),
+                        "turnover_rate": float(row_data[8]) if row_data[8] != "" else 0.0,
+                        "trade_status": int(row_data[9])
+                    }
+                    data_list.append(data)
+        except BaoStockUnavailable as exc:
+            logger.warning(f"BaoStock 不可用，{symbol} 将使用东方财富兜底: {exc}")
             return None
 
-        # 根据ETF编码开头数字判断市场，目前只支持A股市场
-        market_label = "sz" if symbol.startswith("1") else "sh"
-
-        bs_raw_data = bs.query_history_k_data_plus(
-            code=f"{market_label}.{symbol}",
-            fields=fields,
-            start_date=start_date,
-            end_date=end_date,
-            frequency="d",
-            adjustflag="2"  # 默认前复权
-        )
-
-        if bs_raw_data.error_code != self.GOOD_STATUS_CODE:
-            logger.error(f"查询 BaoStock 失败， 错误码: {bs_raw_data.error_code}, 错误信息: {bs_raw_data.error_msg}")
-            return None
-
-        data_list = []
-        while (bs_raw_data.error_code == self.GOOD_STATUS_CODE) and bs_raw_data.next():
-            row_data = bs_raw_data.get_row_data()
-            data = {
-                "trade_date": row_data[0],
-                "symbol": symbol,
-                "open_px": float(row_data[2]),
-                "high_px": float(row_data[3]),
-                "low_px": float(row_data[4]),
-                "close_px": float(row_data[5]),
-                "volume": int(float(row_data[6]) / 100),  # baostock提供的单位是股，转换为手
-                "amount": float(row_data[7]),
-                "turnover_rate": float(row_data[8]) if row_data[8] != "" else 0.0,
-                "trade_status": int(row_data[9])
-            }
-            data_list.append(data)
         logger.info(f"成功获取{symbol} {start_date} 至 {end_date} 的日线数据（BaoStock），"
                     f"记录数为{len(data_list)}。")
-        bs.logout()
         return pd.DataFrame(data_list)
 
     @rate_limit(min_interval=60.0, key="eastmoney_ohlcv")

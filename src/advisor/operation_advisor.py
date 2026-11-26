@@ -41,6 +41,8 @@ def generate_advice(positions: list[dict],
                     last_buy_dates: dict[str, date] | None = None,
                     add_counts: dict[str, int] | None = None,
                     entry_add_budget: dict | None = None,
+                    entry_budget_overrides: dict | None = None,
+                    code_volatility_groups: dict[str, str] | None = None,
                     stop_loss_profiles: dict[str, str] | None = None,
                     add_cooldown_days: int = 0,
                     use_premium_gate: bool = True,
@@ -61,6 +63,8 @@ def generate_advice(positions: list[dict],
         last_buy_dates: {code: date} 最近一次真实建仓/加仓日期
         add_counts: {code: int} 已执行加仓次数
         entry_add_budget: 70/15/15 等执行预算拆分参数
+        entry_budget_overrides: 按波动组调整目标预算的规则
+        code_volatility_groups: {code: volatility_group}，用于按波动组应用预算覆盖
         stop_loss_profiles: {code: stop_loss_profile} ETF 止损 profile
         add_cooldown_days: 加仓冷却天数，0 表示不启用
         use_premium_gate: 是否启用高溢价硬门控
@@ -86,6 +90,8 @@ def generate_advice(positions: list[dict],
     last_buy_dates = last_buy_dates or {}
     add_counts = add_counts or {}
     entry_add_budget = entry_add_budget or {}
+    entry_budget_overrides = entry_budget_overrides or {}
+    code_volatility_groups = code_volatility_groups or {}
     stop_loss_profiles = stop_loss_profiles or {}
     pos_map = {p["code"]: p for p in positions}
 
@@ -117,6 +123,7 @@ def generate_advice(positions: list[dict],
                 market_regime=regime_for_code,
                 add_count=add_count,
                 budget=entry_add_budget,
+                budget_override_rule=None,
                 stop_loss_profile=stop_loss_profile,
                 risk_reason=rs.get("reason"),
             )
@@ -196,7 +203,18 @@ def generate_advice(positions: list[dict],
                 signal_source = SignalSource.ADD_BUDGET
                 blocked_reason = reason
 
-        budget_plan = _budget_plan(raw_advice, add_count, entry_add_budget)
+        budget_override_rule = _budget_override_rule_for_code(
+            code,
+            code_volatility_groups,
+            entry_budget_overrides,
+        )
+        budget_plan = _budget_plan(
+            raw_advice,
+            add_count,
+            entry_add_budget,
+            signal_meta=signal_meta,
+            budget_override_rule=budget_override_rule,
+        )
         if advice not in (AdviceAction.OPEN, AdviceAction.ADD) and raw_advice not in (
             AdviceAction.OPEN,
             AdviceAction.ADD,
@@ -211,6 +229,7 @@ def generate_advice(positions: list[dict],
             market_regime=regime_for_code,
             add_count=add_count,
             budget=entry_add_budget,
+            budget_override_rule=budget_override_rule,
             stop_loss_profile=stop_loss_profile,
             blocked_reason=blocked_reason,
             budget_plan=budget_plan,
@@ -290,9 +309,21 @@ def _to_float(value) -> float | None:
         return None
 
 
-def _budget_plan(raw_advice: AdviceAction, add_count: int, budget: dict) -> dict:
+def _budget_plan(
+    raw_advice: AdviceAction,
+    add_count: int,
+    budget: dict,
+    *,
+    signal_meta: dict | None = None,
+    budget_override_rule: dict | None = None,
+) -> dict:
     """Build the target budget metadata for entry/add advice."""
-    entry_ratio = _to_float(budget.get("entry_ratio")) or 1.0
+    base_entry_ratio = _to_float(budget.get("entry_ratio")) or 1.0
+    multiplier, override_meta = _entry_budget_multiplier(
+        signal_meta or {},
+        budget_override_rule,
+    )
+    entry_ratio = base_entry_ratio * multiplier
     steps = budget.get("add_steps", [])
 
     if raw_advice == AdviceAction.OPEN:
@@ -301,6 +332,7 @@ def _budget_plan(raw_advice: AdviceAction, add_count: int, budget: dict) -> dict
             "target_budget_ratio": entry_ratio,
             "target_position_ratio": entry_ratio,
             "entry_add_step": None,
+            **override_meta,
         }
 
     if raw_advice != AdviceAction.ADD or add_count >= len(steps):
@@ -316,11 +348,56 @@ def _budget_plan(raw_advice: AdviceAction, add_count: int, budget: dict) -> dict
     )
     return {
         "stage": "add",
-        "target_budget_ratio": step_ratio,
-        "target_position_ratio": entry_ratio + completed_add_ratio + step_ratio,
+        "target_budget_ratio": step_ratio * multiplier,
+        "target_position_ratio": (
+            base_entry_ratio + completed_add_ratio + step_ratio
+        ) * multiplier,
         "entry_add_step": add_count + 1,
         "require_profit": step.get("require_profit", True),
         "min_score": step.get("min_score"),
+        **override_meta,
+    }
+
+
+def _budget_override_rule_for_code(
+    code: str,
+    code_volatility_groups: dict[str, str],
+    entry_budget_overrides: dict,
+) -> dict | None:
+    group = code_volatility_groups.get(code, "unknown_vol")
+    rule = entry_budget_overrides.get(group)
+    if not rule or not rule.get("enabled", False):
+        return None
+    return rule
+
+
+def _entry_budget_multiplier(signal_meta: dict, rule: dict | None) -> tuple[float, dict]:
+    if rule is None or rule.get("kind") != "quality_tier":
+        return 1.0, {}
+    score = _to_float(signal_meta.get("score"))
+    if score is None:
+        return 1.0, {
+            "budget_override_kind": "quality_tier",
+            "budget_quality_tier": "unknown",
+            "budget_multiplier": 1.0,
+        }
+
+    strong_score = _to_float(rule.get("strong_score")) or 65.0
+    medium_score = _to_float(rule.get("medium_score")) or 55.0
+    if score >= strong_score:
+        tier = "strong"
+        multiplier = _to_float(rule.get("strong_multiplier")) or 1.0
+    elif score >= medium_score:
+        tier = "medium"
+        multiplier = _to_float(rule.get("medium_multiplier")) or 0.80
+    else:
+        tier = "weak"
+        multiplier = _to_float(rule.get("weak_multiplier")) or 0.60
+
+    return multiplier, {
+        "budget_override_kind": "quality_tier",
+        "budget_quality_tier": tier,
+        "budget_multiplier": multiplier,
     }
 
 
@@ -333,6 +410,7 @@ def _build_advice_meta(
     market_regime: dict,
     add_count: int,
     budget: dict,
+    budget_override_rule: dict | None,
     stop_loss_profile: str | None,
     blocked_reason: str | None = None,
     budget_plan: dict | None = None,
@@ -358,6 +436,7 @@ def _build_advice_meta(
             "entry_ratio": entry_ratio,
             "add_steps": add_steps,
         },
+        "entry_budget_override": budget_override_rule or {},
         "budget_plan": budget_plan or {},
         "blocked_reason": blocked_reason,
         "risk_reason": risk_reason,

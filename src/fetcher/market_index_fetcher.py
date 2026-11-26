@@ -7,9 +7,9 @@ import akshare as ak
 import baostock as bs
 import pandas as pd
 import requests
-from requests import RequestException
 
 from src.config.settings_reader import MarketIndexItem
+from src.fetcher.baostock_session import BaoStockUnavailable, baostock_session
 from src.utils import get_logger, rate_limit, retry_on_error
 
 logger = get_logger(__name__)
@@ -89,43 +89,41 @@ class MarketIndexFetcher:
         end_date: str,
     ) -> pd.DataFrame:
         """从 BaoStock 获取指数 OHLCV + 成交额。"""
-        lg = bs.login()
-        if lg.error_code != self.GOOD_STATUS_CODE:
-            raise RequestException(f"登录 BaoStock 失败: {lg.error_code} {lg.error_msg}")
-
         try:
-            fields = "date,code,open,high,low,close,volume,amount"
-            rs = bs.query_history_k_data_plus(
-                code=index.baostock_code,
-                fields=fields,
-                start_date=start_date,
-                end_date=end_date,
-                frequency="d",
-            )
-            if rs.error_code != self.GOOD_STATUS_CODE:
-                raise RequestException(
-                    f"查询 BaoStock 失败: {rs.error_code} {rs.error_msg}"
+            with baostock_session():
+                fields = "date,code,open,high,low,close,volume,amount"
+                rs = bs.query_history_k_data_plus(
+                    code=index.baostock_code,
+                    fields=fields,
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency="d",
                 )
+                if rs.error_code != self.GOOD_STATUS_CODE:
+                    raise BaoStockUnavailable(
+                        f"查询失败: {rs.error_code} {rs.error_msg}"
+                    )
 
-            rows: list[dict[str, Any]] = []
-            while rs.next():
-                row = rs.get_row_data()
-                rows.append({
-                    "index_code": index.code,
-                    "date": row[0],
-                    "open": _to_float(row[2]),
-                    "high": _to_float(row[3]),
-                    "low": _to_float(row[4]),
-                    "close": _to_float(row[5]),
-                    "volume": _to_float(row[6]),
-                    "amount": _to_float(row[7]),
-                })
+                rows: list[dict[str, Any]] = []
+                while rs.next():
+                    row = rs.get_row_data()
+                    rows.append({
+                        "index_code": index.code,
+                        "date": row[0],
+                        "open": _to_float(row[2]),
+                        "high": _to_float(row[3]),
+                        "low": _to_float(row[4]),
+                        "close": _to_float(row[5]),
+                        "volume": _to_float(row[6]),
+                        "amount": _to_float(row[7]),
+                    })
             logger.info(
                 f"BaoStock 指数 {index.code} {start_date}~{end_date} 返回 {len(rows)} 条"
             )
             return pd.DataFrame(rows)
-        finally:
-            bs.logout()
+        except BaoStockUnavailable as exc:
+            logger.warning(f"BaoStock 不可用，指数 {index.code} 将尝试 AKShare 兜底: {exc}")
+            return pd.DataFrame()
 
     @rate_limit(min_interval=8.0, key="akshare_index")
     @retry_on_error(max_retries=2, retry_delay=8.0)

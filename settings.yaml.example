@@ -325,7 +325,19 @@ strategy:
         - ratio: 0.15
           require_profit: true
           min_score: 70
-
+    volatility_signal_profiles:
+      high_vol:
+        enabled: true
+        kind: "high_vol_balanced"
+    entry_budget_overrides:
+      high_vol:
+        enabled: true
+        kind: "quality_tier"
+        strong_score: 65
+        strong_multiplier: 1.00
+        medium_score: 55
+        medium_multiplier: 0.80
+        weak_multiplier: 0.60
 risk_control:
   rules:
     - type: "max_holding_days"

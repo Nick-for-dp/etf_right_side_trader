@@ -18,11 +18,12 @@ data.db
 *.log
 .reasonix/
 .etf_cache/
+.pytest_cache/
 
-# Local tests, backtest experiments and reports
+# Local tests sandbox
 tests/
 src/backtest/
-src/ds_backtest/
+ablation.py
 
 # Local development/planning docs
 temp_plan.md

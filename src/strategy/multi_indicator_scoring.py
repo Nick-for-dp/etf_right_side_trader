@@ -1,7 +1,7 @@
-"""多指标综合评分策略（V2.0）。
+"""Multi-indicator scoring strategy.
 
-四个子信号加权求和 → -100~+100 连续评分，Volume 作为置信度乘数。
-评分后内部做阈值映射为 BUY/SELL/HOLD，下游 advisor 无需改动。
+The default profile is the v2.3 production signal. Optional volatility scoped
+profiles can override signal generation for selected ETF groups.
 """
 
 import numpy as np
@@ -11,17 +11,20 @@ from .base import BaseStrategy
 
 
 class MultiIndicatorScoring(BaseStrategy):
-    """综合趋势、动能、RSI、布林带四维度加权评分。
+    """Score trend, momentum, RSI and Bollinger signals into BUY/SELL/HOLD."""
 
-    不做离散状态机——连续函数直接算分，避免信息损失。
-    """
-
-    def __init__(self, weights: dict, thresholds: dict):
+    def __init__(
+        self,
+        weights: dict,
+        thresholds: dict,
+        volatility_signal_profiles: dict | None = None,
+        code_volatility_groups: dict[str, str] | None = None,
+    ):
         self.weights = weights
         self.thresholds = thresholds
-        self.version = "2.3"
-
-    # ── 子信号计算 ──
+        self.volatility_signal_profiles = volatility_signal_profiles or {}
+        self.code_volatility_groups = code_volatility_groups or {}
+        self.version = self._resolve_version()
 
     @staticmethod
     def _calc_s_trend(spread: pd.Series, position: pd.Series) -> pd.Series:
@@ -45,131 +48,52 @@ class MultiIndicatorScoring(BaseStrategy):
         width_factor = (bb_width_pct / 0.05).clip(0.3, 1.0)
         return (base * width_factor).clip(-1, 1)
 
-    # ── 主入口 ──
+    @staticmethod
+    def _macd_hist(df: pd.DataFrame) -> pd.Series:
+        return (df["dif"] - df["dea"]) / df["close"]
+
+    @staticmethod
+    def _bb_position(df: pd.DataFrame) -> pd.Series:
+        width = (df["bb_upper"] - df["bb_lower"]).replace(0, np.nan)
+        return ((df["close"] - df["bb_lower"]) / width).fillna(0.5).clip(0, 1.2)
+
+    @staticmethod
+    def _high_vol_rsi_signal(rsi: pd.Series) -> pd.Series:
+        delta = rsi.diff().fillna(0.0)
+        neutral_rise = ((rsi - 45) / 20).clip(0, 1) * (delta >= 0).astype(float)
+        overheat = ((rsi - 72) / 13).clip(0, 1)
+        weak = ((42 - rsi) / 12).clip(0, 1)
+        return (neutral_rise - overheat - weak).clip(-1, 1)
+
+    @classmethod
+    def _high_vol_bb_signal(cls, df: pd.DataFrame) -> pd.Series:
+        pos = cls._bb_position(df)
+        base = ((pos - 0.45) / 0.4).clip(-1, 1)
+        overextended = ((pos - 0.95) / 0.08).clip(0, 1)
+        return (base - overextended).clip(-1, 1)
+
+    @staticmethod
+    def _volume_signal(vol_ratio: pd.Series) -> pd.Series:
+        return ((vol_ratio - 1.0) / 0.5).clip(-1, 1)
+
+    @staticmethod
+    def _high_vol_atr_signal(atr_pct: pd.Series) -> pd.Series:
+        normal = (1 - ((atr_pct - 0.03).abs() / 0.03)).clip(0, 1)
+        extreme = ((atr_pct - 0.06) / 0.03).clip(0, 1)
+        return (normal - extreme).clip(-1, 1)
 
     def generate(self, df: pd.DataFrame) -> pd.DataFrame:
-        """综合趋势/动能/RSI/布林带四维度加权评分，生成 -100~+100 连续评分并映射为交易信号。
-
-        不做离散状态机——四子信号连续加权求和，Volume 作为置信度乘数。
-        评分后内部阈值映射为 BUY/SELL/HOLD，下游 advisor 无需改动。
-
-        Args:
-            df: 含 ma20、ma60、close、dif、dea、rsi、bb_upper、bb_lower、vol_ratio
-                列的指标 DataFrame
-
-        Returns:
-            DataFrame，columns = [code, date, signal, strategy_version, signal_meta]，
-            signal 可选值为 BUY / SELL / HOLD，
-            signal_meta 包含 s_trend / s_macd / s_rsi / s_bb / vol_mult / raw_score / score
-
-        Example:
-            >>> strategy = MultiIndicatorScoring(
-            ...     weights={"trend": 0.45, "macd": 0.30, "rsi": 0.15, "bb": 0.10},
-            ...     thresholds={"buy": 30, "sell": -30},
-            ... )
-            >>> signals = strategy.generate(indicator_df)
-            >>> signals[signals["signal"] != "HOLD"].head()
-        """
+        """Generate BUY/SELL/HOLD signals from indicator rows."""
         df = df.sort_values(["code", "date"]).reset_index(drop=True)
-
-        required = ["ma20", "ma60", "close", "dif", "dea", "rsi",
-                    "bb_upper", "bb_lower", "bb_mid", "bb_width",
-                    "adx14", "vol_ratio"]
-        nan_mask = df[required].isna().any(axis=1)
-        valid_df = df.loc[nan_mask == False].copy()
-        nan_df = df[nan_mask]
-
         results = []
 
-        if len(valid_df) > 0:
-            for code in valid_df["code"].unique():
-                mask = valid_df["code"] == code
-                code_df = valid_df[mask].sort_values("date").reset_index(drop=True)
-
-                # ── 第一步：从原始指标列派生中间变量 ──
-                spread = (code_df["ma20"] - code_df["ma60"]) / code_df["ma60"]
-                position = (code_df["close"] - code_df["ma20"]) / code_df["ma20"]
-                dif_norm = code_df["dif"] / code_df["close"]
-                macd_hist_norm = (code_df["dif"] - code_df["dea"]) / code_df["close"]
-                pos_in_band = (
-                    (code_df["close"] - code_df["bb_lower"])
-                    / (code_df["bb_upper"] - code_df["bb_lower"])
-                )
-
-                # ── 第二步：计算四个子信号（每个映射到 [-1, 1]）──
-                s_trend = self._calc_s_trend(spread, position)
-                s_macd = self._calc_s_macd(dif_norm, macd_hist_norm)
-                s_rsi = self._calc_s_rsi(code_df["rsi"])
-                bb_width_pct = code_df["bb_width"]
-                s_bb = self._calc_s_bb(pos_in_band, bb_width_pct)
-
-                # ── 第三步：加权求和得到原始评分 ──
-                raw_score = (
-                    s_trend * self.weights["trend"]
-                    + s_macd * self.weights["macd"]
-                    + s_rsi * self.weights["rsi"]
-                    + s_bb * self.weights["bb"]
-                )
-
-                # ── 第四步：成交量乘数调整 ──
-                vol_mult = code_df["vol_ratio"].clip(lower=0.6, upper=1.15) ** 0.3
-                # ── 第五步：ADX 趋势强度乘数 ──
-                adx = code_df["adx14"]
-                adx_mult = np.where(
-                    adx < 20, 0.5,
-                    np.where(adx > 25, 1.0, 0.75)
-                )
-                score = raw_score * vol_mult * adx_mult * 100
-
-                # ── 第六步：评分阈值 + 子信号一致性双重条件映射为 BUY / SELL / HOLD ──
-                # 右侧交易核心原则：单一指标不构成入场理由，至少两个维度同时确认
-                signal = pd.Series("HOLD", index=code_df.index)
-
-                # BUY 条件：评分达标 + 至少 2 个子信号为正（避免 S_trend 独木难支）
-                score_pass_buy = score >= self.thresholds["buy"]
-                pos_count = (s_trend > 0).astype(int) + (s_macd > 0).astype(int) \
-                    + (s_rsi > 0).astype(int) + (s_bb > 0).astype(int)
-                consensus_buy = pos_count >= 2
-                signal[score_pass_buy & consensus_buy] = "BUY"
-
-                # SELL 条件：评分达标 + 至少 2 个子信号为负（对称原则，避免恐慌性离场）
-                score_pass_sell = score <= self.thresholds["sell"]
-                neg_count = (s_trend < 0).astype(int) + (s_macd < 0).astype(int) \
-                    + (s_rsi < 0).astype(int) + (s_bb < 0).astype(int)
-                consensus_sell = neg_count >= 2
-                signal[score_pass_sell & consensus_sell] = "SELL"
-
-                # ── 第七步：组装输出（signal_meta 存子信号分解值，便于调试和回测）──
-                for i in code_df.index:
-                    meta = {
-                        "s_trend": round(float(s_trend[i]), 6),
-                        "s_macd": round(float(s_macd[i]), 6),
-                        "s_rsi": round(float(s_rsi[i]), 6),
-                        "s_bb": round(float(s_bb[i]), 6),
-                        "bb_width_pct": round(float(bb_width_pct[i]), 6),
-                        "vol_mult": round(float(vol_mult[i]), 4),
-                        "adx_mult": round(float(adx_mult[i]), 4),
-                        "adx": round(float(adx[i]), 4),
-                        "raw_score": round(float(raw_score[i]), 6),
-                        "score": round(float(score[i]), 4),
-                    }
-                    results.append({
-                        "code": code_df.at[i, "code"],
-                        "date": code_df.at[i, "date"],
-                        "signal": signal[i],
-                        "strategy_version": self.version,
-                        "signal_meta": meta,
-                    })
-
-        # 指标缺失的行 → 无脑 HOLD，不做判断
-        for _, row in nan_df.iterrows():
-            results.append({
-                "code": row["code"],
-                "date": row["date"],
-                "signal": "HOLD",
-                "strategy_version": self.version,
-                "signal_meta": {},
-            })
+        for code in df["code"].unique():
+            code_df = df[df["code"] == code].sort_values("date").reset_index(drop=True)
+            profile = self._profile_for_code(code)
+            if profile == "high_vol_balanced":
+                results.extend(self._generate_high_vol_balanced(code_df))
+            else:
+                results.extend(self._generate_default(code_df, profile=profile))
 
         if results:
             return pd.DataFrame(results, columns=[
@@ -178,3 +102,259 @@ class MultiIndicatorScoring(BaseStrategy):
         return pd.DataFrame(
             columns=["code", "date", "signal", "strategy_version", "signal_meta"]
         )
+
+    def _generate_default(
+        self,
+        code_df: pd.DataFrame,
+        profile: str | None = None,
+    ) -> list[dict]:
+        # 检查当前code是否有profile参数覆盖
+        code = code_df.iloc[0]["code"]
+        profile_params = self._profile_params(code)
+        buy_th = profile_params.get("buy_threshold", self.thresholds["buy"])
+        sell_th = profile_params.get("sell_threshold", self.thresholds["sell"])
+        min_pos = profile_params.get("min_positive", 2)
+        required = [
+            "ma20", "ma60", "close", "dif", "dea", "rsi",
+            "bb_upper", "bb_lower", "bb_mid", "bb_width",
+            "adx14", "vol_ratio",
+        ]
+        valid, invalid = self._split_valid_rows(code_df, required)
+        results = [self._hold_row(row, profile=profile) for _, row in invalid.iterrows()]
+        if valid.empty:
+            return results
+
+        spread = (valid["ma20"] - valid["ma60"]) / valid["ma60"]
+        position = (valid["close"] - valid["ma20"]) / valid["ma20"]
+        dif_norm = valid["dif"] / valid["close"]
+        macd_hist_norm = self._macd_hist(valid)
+        pos_in_band = (
+            (valid["close"] - valid["bb_lower"])
+            / (valid["bb_upper"] - valid["bb_lower"])
+        )
+
+        s_trend = self._calc_s_trend(spread, position)
+        s_macd = self._calc_s_macd(dif_norm, macd_hist_norm)
+        s_rsi = self._calc_s_rsi(valid["rsi"])
+        bb_width_pct = valid["bb_width"]
+        s_bb = self._calc_s_bb(pos_in_band, bb_width_pct)
+
+        raw_score = (
+            s_trend * self.weights["trend"]
+            + s_macd * self.weights["macd"]
+            + s_rsi * self.weights["rsi"]
+            + s_bb * self.weights["bb"]
+        )
+        vol_mult = valid["vol_ratio"].clip(lower=0.6, upper=1.15) ** 0.3
+        adx = valid["adx14"]
+        adx_mult = np.where(adx < 20, 0.5, np.where(adx > 25, 1.0, 0.75))
+        score = raw_score * vol_mult * adx_mult * 100
+
+        signal = pd.Series("HOLD", index=valid.index)
+        pos_count = (
+            (s_trend > 0).astype(int)
+            + (s_macd > 0).astype(int)
+            + (s_rsi > 0).astype(int)
+            + (s_bb > 0).astype(int)
+        )
+        signal[(score >= buy_th) & (pos_count >= min_pos)] = "BUY"
+
+        neg_count = (
+            (s_trend < 0).astype(int)
+            + (s_macd < 0).astype(int)
+            + (s_rsi < 0).astype(int)
+            + (s_bb < 0).astype(int)
+        )
+        signal[(score <= sell_th) & (neg_count >= 2)] = "SELL"
+
+        adx_mult_series = pd.Series(adx_mult, index=valid.index)
+        for idx, row in valid.iterrows():
+            meta = {
+                "s_trend": round(float(s_trend.loc[idx]), 6),
+                "s_macd": round(float(s_macd.loc[idx]), 6),
+                "s_rsi": round(float(s_rsi.loc[idx]), 6),
+                "s_bb": round(float(s_bb.loc[idx]), 6),
+                "bb_width_pct": round(float(bb_width_pct.loc[idx]), 6),
+                "vol_mult": round(float(vol_mult.loc[idx]), 4),
+                "adx_mult": round(float(adx_mult_series.loc[idx]), 4),
+                "adx": round(float(adx.loc[idx]), 4),
+                "raw_score": round(float(raw_score.loc[idx]), 6),
+                "score": round(float(score.loc[idx]), 4),
+            }
+            if profile:
+                meta["profile"] = profile
+            results.append(self._signal_row(row, signal.loc[idx], meta))
+        return results
+
+    def _generate_high_vol_balanced(self, code_df: pd.DataFrame) -> list[dict]:
+        required = [
+            "ma20", "ma60", "close", "dif", "dea", "rsi",
+            "bb_upper", "bb_lower", "bb_mid", "bb_width",
+            "adx14", "vol_ratio", "atr_pct",
+        ]
+        valid, invalid = self._split_valid_rows(code_df, required)
+        results = [
+            self._hold_row(row, profile="high_vol_balanced")
+            for _, row in invalid.iterrows()
+        ]
+        if valid.empty:
+            return results
+
+        spread = (valid["ma20"] - valid["ma60"]) / valid["ma60"]
+        position = (valid["close"] - valid["ma20"]) / valid["ma20"]
+        dif_norm = valid["dif"] / valid["close"]
+        macd_hist_norm = self._macd_hist(valid)
+
+        s_trend = self._calc_s_trend(spread, position)
+        s_macd = self._calc_s_macd(dif_norm, macd_hist_norm)
+        s_rsi = self._high_vol_rsi_signal(valid["rsi"])
+        s_bb = self._high_vol_bb_signal(valid)
+        s_volume = self._volume_signal(valid["vol_ratio"])
+        s_atr = self._high_vol_atr_signal(valid["atr_pct"])
+        score = (
+            s_trend * 0.30
+            + s_macd * 0.25
+            + s_rsi * 0.15
+            + s_bb * 0.15
+            + s_volume * 0.10
+            + s_atr * 0.05
+        ) * 100
+
+        params = self._profile_params(code_df.iloc[0]["code"])
+        buy_th = params["buy_threshold"]
+        sell_th = params["sell_threshold"]
+        adx_min = params["adx_min"]
+        min_pos = params["min_positive"]
+
+        trend_gate_parts = []
+        if params["trend_gate_ma20_above_ma60"]:
+            trend_gate_parts.append(valid["ma20"] >= valid["ma60"])
+        if params["trend_gate_close_above_ma60"]:
+            trend_gate_parts.append(valid["close"] >= valid["ma60"])
+        trend_gate = trend_gate_parts[0] if len(trend_gate_parts) == 1 else (
+            trend_gate_parts[0] | trend_gate_parts[1]
+        )
+
+        macd_not_bad = self._macd_hist(valid) >= params["macd_not_bad_threshold"]
+        positive_count = (
+            (s_trend > 0).astype(int)
+            + (s_macd > 0).astype(int)
+            + (s_rsi > 0).astype(int)
+            + (s_bb > 0).astype(int)
+            + (s_volume > 0).astype(int)
+        )
+        sell_break = (
+            (valid["close"] < valid["ma20"])
+            & (self._macd_hist(valid) < 0)
+            & (valid["rsi"] < 45)
+        ) | ((valid["close"] < valid["ma60"]) & (self._macd_hist(valid) < 0))
+
+        signal = pd.Series("HOLD", index=valid.index)
+        buy_mask = (
+            (score >= buy_th)
+            & trend_gate
+            & macd_not_bad
+            & (valid["adx14"] >= adx_min)
+            & (positive_count >= min_pos)
+        )
+        signal[buy_mask] = "BUY"
+        signal[(score <= sell_th) | sell_break] = "SELL"
+
+        for idx, row in valid.iterrows():
+            meta = {
+                "profile": "high_vol_balanced",
+                "s_trend": round(float(s_trend.loc[idx]), 6),
+                "s_macd": round(float(s_macd.loc[idx]), 6),
+                "s_rsi": round(float(s_rsi.loc[idx]), 6),
+                "s_bb": round(float(s_bb.loc[idx]), 6),
+                "s_volume": round(float(s_volume.loc[idx]), 6),
+                "s_atr": round(float(s_atr.loc[idx]), 6),
+                "adx": round(float(valid.at[idx, "adx14"]), 4),
+                "atr_pct": round(float(valid.at[idx, "atr_pct"]), 6),
+                "score": round(float(score.loc[idx]), 4),
+            }
+            results.append(self._signal_row(row, signal.loc[idx], meta))
+        return results
+
+    def _profile_for_code(self, code: str) -> str | None:
+        group = self.code_volatility_groups.get(code, "unknown_vol")
+        profile = self.volatility_signal_profiles.get(group) or {}
+        if not profile.get("enabled", False):
+            return None
+        return profile.get("kind")
+
+    def _profile_params(self, code: str) -> dict:
+        group = self.code_volatility_groups.get(code, "unknown_vol")
+        profile = self.volatility_signal_profiles.get(group) or {}
+        if not profile.get("enabled", False):
+            return {}
+        params = profile.get("params", {}) or {}
+        result = {}
+        kind = profile.get("kind", "")
+        if kind == "high_vol_balanced":
+            result = {
+                "buy_threshold": params.get("buy_threshold", 45),
+                "sell_threshold": params.get("sell_threshold", -35),
+                "adx_min": params.get("adx_min", 18),
+                "min_positive": params.get("min_positive", 3),
+                "trend_gate_ma20_above_ma60": params.get("trend_gate_ma20_above_ma60", True),
+                "trend_gate_close_above_ma60": params.get("trend_gate_close_above_ma60", True),
+                "macd_not_bad_threshold": params.get("macd_not_bad_threshold", -0.002),
+            }
+        elif kind == "relaxed_default":
+            result = {
+                "buy_threshold": params.get("buy_threshold", 40),
+                "sell_threshold": params.get("sell_threshold", -45),
+                "min_positive": params.get("min_positive", 1),
+            }
+        return result
+
+    def _has_enabled_profile(self) -> bool:
+        return any(
+            profile.get("enabled", False)
+            for profile in self.volatility_signal_profiles.values()
+        )
+
+    def _resolve_version(self) -> str:
+        if not self._has_enabled_profile():
+            return "2.3"
+        for profile in self.volatility_signal_profiles.values():
+            if not profile.get("enabled", False):
+                continue
+            kind = profile.get("kind", "")
+            params = profile.get("params", {}) or {}
+            if kind == "relaxed_default":
+                return "2.6"
+            if kind == "high_vol_balanced" and (
+                params.get("buy_threshold", 45) != 45
+                or params.get("sell_threshold", -35) != -35
+                or params.get("adx_min", 18) != 18
+                or params.get("min_positive", 3) != 3
+            ):
+                return "2.6"
+        return "2.5"
+
+    @staticmethod
+    def _split_valid_rows(
+        df: pd.DataFrame,
+        required: list[str],
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        work = df.copy()
+        for col in required:
+            if col not in work.columns:
+                work[col] = np.nan
+        mask = work[required].isna().any(axis=1)
+        return work.loc[~mask].copy(), work.loc[mask].copy()
+
+    def _hold_row(self, row: pd.Series, profile: str | None = None) -> dict:
+        meta = {"profile": profile} if profile else {}
+        return self._signal_row(row, "HOLD", meta)
+
+    def _signal_row(self, row: pd.Series, signal: str, meta: dict) -> dict:
+        return {
+            "code": row["code"],
+            "date": row["date"],
+            "signal": signal,
+            "strategy_version": self.version,
+            "signal_meta": meta,
+        }

@@ -10,7 +10,7 @@
     python main.py backfill-tushare --symbol 588000 --start 20200101
     python main.py run                           执行一次每日流程（STEP 1-5）
     python main.py schedule                      启动每日 07:00 定时调度
-    python main.py dashboard                     启动 Streamlit 仪表盘
+    python main.py dashboard                     启动 Streamlit 仪表盘（默认端口 18501）
     python main.py backtest-odds                  V2.0 vs V2.1A vs V2.2-market 回测对比
     python main.py backtest-odds --symbol 588000  单只 ETF 回测试算
     python ablation.py --start 2016-01-01       消融实验入口
@@ -115,7 +115,7 @@ def main():
         help="结束日期 YYYY-MM-DD",
     )
 
-    portfolio_parser = sub.add_parser("backtest-portfolio", help="净值口径回测对比（v2.0/v2.1A/v2.2）")
+    portfolio_parser = sub.add_parser("backtest-portfolio", help="净值口径组合回测")
     portfolio_parser.add_argument(
         "--symbol", type=str, default=None,
         help="单只 ETF 代码，不传则覆盖全部配置 ETF",
@@ -168,7 +168,11 @@ def main():
 
     sub.add_parser("run", help="执行一次每日流程")
     sub.add_parser("schedule", help="启动定时调度")
-    sub.add_parser("dashboard", help="启动 Streamlit 仪表盘")
+    dashboard_parser = sub.add_parser("dashboard", help="启动 Streamlit 仪表盘")
+    dashboard_parser.add_argument(
+        "--port", type=int, default=18501,
+        help="仪表盘端口，默认 18501，避开 Windows 常见保留端口段",
+    )
     sub.add_parser("check-data", help="检查各数据域最新日期、缺失数和异常")
     sub.add_parser("sync-etf-mapping", help="同步 settings.yaml ETF 映射到数据库")
 
@@ -318,10 +322,12 @@ def main():
         dispose_engine()
     elif args.command == "dashboard":
         import subprocess
+        # 明确指定端口，避免 Streamlit 从被系统保留的 8601-8700 区间自动探测失败。
         subprocess.run([
             sys.executable, "-m", "streamlit", "run",
             "src/dashboard/app.py",
             "--server.headless", "true",
+            "--server.port", str(args.port),
         ])
 
 

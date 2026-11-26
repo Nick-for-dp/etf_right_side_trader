@@ -303,6 +303,8 @@ def _step5_generate_advice(config: AppConfig, t_minus_1: date,
         last_buy_dates=last_buy_dates,
         add_counts=add_counts,
         entry_add_budget=config.strategy_params.get("entry_add_budget", {}),
+        entry_budget_overrides=config.strategy_params.get("entry_budget_overrides", {}),
+        code_volatility_groups={etf.symbol: etf.volatility_group for etf in config.etf_list},
         stop_loss_profiles=stop_loss_profiles,
         add_cooldown_days=config.strategy_params.get("cooldown_days", 5),
     )
