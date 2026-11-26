@@ -11,7 +11,8 @@ from src.backtest.stop_loss_attribution_report import (
 
 def test_parse_threshold_reads_percent_tail():
     assert _parse_threshold("stop_loss:-8.00%") == -0.08
-    assert _parse_threshold("atr_2_5 浮亏 -10.00% ≤ 止损线 -10.00%，强制卖出") is None
+    assert _parse_threshold("atr_2_5 浮亏 -10.00% ≤ 止损线 -10.00%，强制卖出") == -0.1
+    assert _parse_threshold("max_holding 持有 141 天") is None
     assert _parse_threshold(None) is None
 
 

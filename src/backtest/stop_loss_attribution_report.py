@@ -2,11 +2,12 @@
 
 只从回测交易记录中提取 signal_source = stop_loss 的退出，
 统计退出时的盈亏、之后 20/60 个交易日的收益，并按波动组和 ATR 分桶。
-样本极少（历史上 423 笔闭合交易只有 7 次止损），结论仅作参考。
+样本极少（统一引擎 430 笔闭合交易只有 8 次止损），结论仅作参考。
 """
 
 from collections import defaultdict
 from datetime import date, timedelta
+import re
 from statistics import median
 from typing import Any
 
@@ -183,14 +184,24 @@ def _forward_return(
 # ── 小工具 ──
 
 def _parse_threshold(reason: str | None) -> float | None:
-    if not reason or ":" not in reason:
+    """从风控原因里解析止损线。
+
+    兼容两种写法：
+    - `stop_loss:-8.00%`（旧格式，冒号分隔）
+    - `fixed_8 浮亏 -9.50% ≤ 止损线 -8.00%，强制卖出`（生产格式）
+    """
+    if not reason:
         return None
-    tail = reason.rsplit(":", 1)[-1].strip()
-    if tail.endswith("%"):
-        try:
-            return float(tail[:-1]) / 100.0
-        except ValueError:
-            return None
+    matched = re.search(r"止损线\s*(-?\d+(?:\.\d+)?)%", reason)
+    if matched:
+        return float(matched.group(1)) / 100.0
+    if ":" in reason:
+        tail = reason.rsplit(":", 1)[-1].strip()
+        if tail.endswith("%"):
+            try:
+                return float(tail[:-1]) / 100.0
+            except ValueError:
+                return None
     return None
 
 
