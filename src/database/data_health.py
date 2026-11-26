@@ -1,9 +1,13 @@
-"""数据健康检查：输出各数据域最新日期、覆盖区间和缺失情况。
+"""数据健康检查：最新日期、断档与停更，异常时给出非零退出码。
 
 用法:
     python main.py check-data
 
-输出各表的汇总状态，帮助判断数据链路是否正常。
+检查口径：
+- 以 T-1 交易日为基准，回看最近 90 天；
+- ETF 行情、指标、信号、建议逐代码核对缺失交易日；
+- 指数行情核对是否停在 T-1 之前。
+任一硬校验失败，进程返回退出码 1，供调度和人工巡检使用。
 """
 
 from datetime import date, timedelta
@@ -17,32 +21,61 @@ from src.database import (
     signals_repo,
     advice_repo,
 )
+from src.service import TradingCalendarService
 from src.utils import get_logger
 
 logger = get_logger(__name__)
 
+_WINDOW_DAYS = 90
 
-def check_all(config: AppConfig) -> None:
-    """检查所有核心数据域的健康状态。"""
+
+def check_all(config: AppConfig, window_days: int = _WINDOW_DAYS) -> bool:
+    """执行全部检查，返回是否通过（True = 无硬性问题）。"""
+    calendar = TradingCalendarService()
+    t_minus_1 = date.fromisoformat(calendar.get_previous_trading_day())
+    window_start = t_minus_1 - timedelta(days=window_days)
+    expected = {
+        date.fromisoformat(d)
+        for d in calendar.get_trading_days_in_range(window_start, t_minus_1)
+    }
+
     print("=" * 72)
     print("  数据健康检查报告")
     print("=" * 72)
+    print(f"  基准交易日 T-1: {t_minus_1}    检查窗口: {window_start} ~ {t_minus_1}")
     print()
 
-    _check_etf_quotes(config)
-    _check_market_indices(config)
-    _check_market_regime()
-    _check_indicators(config)
-    _check_signals(config)
-    _check_advice(config)
+    violations: list[str] = []
+    violations += _check_quotes(config, expected, t_minus_1)
+    violations += _check_index_quotes(config, t_minus_1)
+    _check_market_regime(t_minus_1)
+    violations += _check_derived(
+        "技术指标", config, expected, t_minus_1,
+        lambda code, start, end: indicators_repo.find_by_code_between(code, start, end),
+    )
+    violations += _check_derived(
+        "交易信号", config, expected, t_minus_1,
+        lambda code, start, end: signals_repo.find_by_code_between(code, start, end),
+    )
+    violations += _check_derived(
+        "操作建议", config, expected, t_minus_1,
+        lambda code, start, end: advice_repo.find_by_code_between(code, start, end),
+    )
 
     print("=" * 72)
-    print("  检查完成")
+    if violations:
+        print(f"  检查未通过：{len(violations)} 项")
+        for item in violations[:20]:
+            print(f"  - {item}")
+        if len(violations) > 20:
+            print(f"  ... 其余 {len(violations) - 20} 项略")
+    else:
+        print("  检查通过")
     print("=" * 72)
+    return not violations
 
 
 def _print_table(rows: list[list[str]], headers: list[str]) -> None:
-    """打印简单的对齐表格。"""
     col_widths = [len(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
@@ -58,132 +91,74 @@ def _print_table(rows: list[list[str]], headers: list[str]) -> None:
     print()
 
 
-def _find_latest_date(symbol: str, kind: str) -> date | None:
-    """通用的最新日期查找，适配不同 repo 的方法签名。"""
-    today = date.today()
-    start = today - timedelta(days=365)  # 查过去一年
-
-    if kind == "signal":
-        rows = signals_repo.find_by_code_between(symbol, start, today)
-    elif kind == "indicator":
-        rows = indicators_repo.find_by_code_between(symbol, start, today)
-    elif kind == "advice":
-        rows = advice_repo.find_by_code(symbol)
-        rows = [r for r in rows if r.date >= start]
-    else:
-        return None
-
-    if not rows:
-        return None
-    return max(r.date for r in rows)
+def _missing(dates: set[date], expected: set[date]) -> list[date]:
+    return sorted(expected - dates)
 
 
-def _check_etf_quotes(config: AppConfig) -> None:
-    """检查 ETF 行情覆盖情况。"""
-    print(f"[ETF 行情] 共 {len(config.etf_list)} 只")
-    rows = []
+def _check_quotes(config: AppConfig, expected: set[date], t_minus_1: date) -> list[str]:
+    print(f"[ETF 行情] {len(config.etf_list)} 只")
+    rows, problems = [], []
     for etf in config.etf_list:
         latest = quote_repo.find_latest_date(etf.symbol)
         earliest = quote_repo.find_earliest_date(etf.symbol)
-        if latest and earliest:
-            days = (latest - earliest).days
-            status = "OK"
-        elif latest:
-            days = 0
-            status = "PARTIAL"
-        else:
-            days = 0
-            status = "NO DATA"
-        rows.append([
-            etf.symbol,
-            etf.name or "",
-            status,
-            str(earliest or "N/A"),
-            str(latest or "N/A"),
-            f"{days}天",
-        ])
-    _print_table(rows, ["代码", "名称", "状态", "最早", "最新", "跨度"])
+        actual = {
+            q.date for q in quote_repo.find_by_code_in_range(etf.symbol, min(expected), t_minus_1)
+        }
+        miss = _missing(actual, expected)
+        status = "OK" if not miss else f"缺 {len(miss)} 天"
+        if miss:
+            problems.append(f"行情 {etf.symbol} 缺 {len(miss)} 个交易日（最近 {miss[-1]}）")
+        rows.append([etf.symbol, str(earliest or "N/A"), str(latest or "N/A"), status])
+    _print_table(rows, ["代码", "最早", "最新", f"近 {_WINDOW_DAYS} 天断档"])
+    return problems
 
 
-def _check_market_indices(config: AppConfig) -> None:
-    """检查指数行情覆盖情况。"""
-    active = [i for i in config.market_indices if i.weight > 0]
-    inactive = [i for i in config.market_indices if i.weight == 0]
-    print(f"[指数行情] 共 {len(config.market_indices)} 个（热度评分 {len(active)} 个 + 观察 {len(inactive)} 个）")
-
-    headers = ["代码", "名称", "源", "角色", "状态", "最早", "最新", "跨度"]
-    rows = []
+def _check_index_quotes(config: AppConfig, t_minus_1: date) -> list[str]:
+    print(f"[指数行情] {len(config.market_indices)} 个")
+    rows, problems = [], []
     for idx in config.market_indices:
         latest = market_index_quote_repo.find_latest_date(idx.code)
-        earliest = None
-        if latest:
-            quotes = market_index_quote_repo.find_by_code_in_range(
-                idx.code, latest - timedelta(days=720), latest
-            )
-            if quotes:
-                earliest = quotes[0].date
-        role = "评分" if idx.weight > 0 else "观察"
-        if latest and earliest:
-            days = (latest - earliest).days
-            status = "OK"
-        elif latest:
-            days = 0
-            status = "PARTIAL"
-        else:
-            days = 0
-            status = "NO DATA"
-        rows.append([
-            idx.code,
-            idx.name,
-            idx.source,
-            role,
-            status,
-            str(earliest or "N/A"),
-            str(latest or "N/A"),
-            f"{days}天",
-        ])
-    _print_table(rows, headers)
+        stale = latest is None or latest < t_minus_1
+        if stale:
+            problems.append(f"指数 {idx.code} 最新 {latest or 'N/A'} < {t_minus_1}")
+        rows.append([idx.code, idx.name, idx.source, str(latest or "N/A"),
+                     "STALE" if stale else "OK"])
+    _print_table(rows, ["代码", "名称", "源", "最新", "状态"])
+    return problems
 
 
-def _check_market_regime() -> None:
-    """检查市场热度快照。"""
-    print("[市场热度]")
-    today = date.today()
-    regimes = market_regime_repo.find_between(today - timedelta(days=30), today)
-    if regimes:
-        latest = regimes[-1]
-        print(f"  最近 30 天共 {len(regimes)} 条记录")
-        print(f"  最新: {latest.date}  state={latest.state}  score={latest.score}")
+def _check_market_regime(t_minus_1: date) -> None:
+    print("[市场状态]")
+    latest = market_regime_repo.find_between(
+        t_minus_1 - timedelta(days=30), t_minus_1
+    )
+    if latest:
+        last = latest[-1]
+        flag = "" if last.date == t_minus_1 else "（未到 T-1）"
+        print(f"  最新: {last.date} state={last.state} score={last.score} {flag}")
     else:
         print("  最近 30 天无数据")
     print()
 
 
-def _check_indicators(config: AppConfig) -> None:
-    """检查指标数据。"""
-    print(f"[技术指标] {len(config.etf_list)} 只 ETF")
-    rows = []
+def _check_derived(
+    title: str,
+    config: AppConfig,
+    expected: set[date],
+    t_minus_1: date,
+    loader,
+) -> list[str]:
+    print(f"[{title}] {len(config.etf_list)} 只")
+    rows, problems = [], []
+    start = min(expected)
     for etf in config.etf_list:
-        latest = _find_latest_date(etf.symbol, "indicator")
-        rows.append([etf.symbol, str(latest or "N/A")])
-    _print_table(rows, ["代码", "最新指标日期"])
-
-
-def _check_signals(config: AppConfig) -> None:
-    """检查信号数据。"""
-    print(f"[交易信号] {len(config.etf_list)} 只 ETF")
-    rows = []
-    for etf in config.etf_list:
-        latest = _find_latest_date(etf.symbol, "signal")
-        rows.append([etf.symbol, str(latest or "N/A")])
-    _print_table(rows, ["代码", "最新信号日期"])
-
-
-def _check_advice(config: AppConfig) -> None:
-    """检查操作建议。"""
-    print(f"[操作建议] {len(config.etf_list)} 只 ETF")
-    rows = []
-    for etf in config.etf_list:
-        latest = _find_latest_date(etf.symbol, "advice")
-        rows.append([etf.symbol, str(latest or "N/A")])
-    _print_table(rows, ["代码", "最新建议日期"])
+        records = loader(etf.symbol, start, t_minus_1)
+        actual = {r.date for r in records}
+        latest = max(actual) if actual else None
+        miss = _missing(actual, expected)
+        status = "OK" if not miss else f"缺 {len(miss)} 天"
+        if miss:
+            problems.append(f"{title} {etf.symbol} 缺 {len(miss)} 个交易日（最近 {miss[-1]}）")
+        rows.append([etf.symbol, str(latest or "N/A"), status])
+    _print_table(rows, ["代码", "最新", f"近 {_WINDOW_DAYS} 天断档"])
+    return problems

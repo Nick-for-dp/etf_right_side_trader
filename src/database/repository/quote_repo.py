@@ -101,6 +101,32 @@ def find_latest_date(code: str) -> date | None:
         session.close()
 
 
+def find_quote_on_or_before(code: str, as_of: date) -> Quote | None:
+    """查询某 ETF 在指定日期当天或之前最近的一条行情。
+
+    用于回测与历史补算：任何按日计算的逻辑只能看到 as_of 之前的数据。
+
+    Args:
+        code: ETF 代码
+        as_of: 截止日期（含）
+
+    Returns:
+        最近一条 Quote，无数据时返回 None
+    """
+    session = get_session()
+    try:
+        result = (
+            session.query(QuoteOrm)
+            .filter(QuoteOrm.code == code)
+            .filter(QuoteOrm.date <= as_of)
+            .order_by(QuoteOrm.date.desc())
+            .first()
+        )
+        return result.to_model() if result else None
+    finally:
+        session.close()
+
+
 def find_latest_quote(code: str) -> Quote | None:
     """查询某 ETF 最新一条完整行情记录。
 

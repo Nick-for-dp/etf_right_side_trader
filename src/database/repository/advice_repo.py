@@ -80,6 +80,37 @@ def find_by_date(date: date) -> list[OperationAdvice]:
         session.close()
 
 
+def find_latest_date() -> date | None:
+    """查询全表最新一条操作建议的日期。"""
+    session = get_session()
+    try:
+        result = (
+            session.query(OperationAdviceOrm.date)
+            .order_by(OperationAdviceOrm.date.desc())
+            .first()
+        )
+        return result[0] if result else None
+    finally:
+        session.close()
+
+
+def find_by_code_between(code: str, start: date, end: date) -> list[OperationAdvice]:
+    """查询某 ETF 在日期区间内的操作建议。"""
+    session = get_session()
+    try:
+        results = (
+            session.query(OperationAdviceOrm)
+            .filter(OperationAdviceOrm.code == code)
+            .filter(OperationAdviceOrm.date >= start)
+            .filter(OperationAdviceOrm.date <= end)
+            .order_by(OperationAdviceOrm.date.asc())
+            .all()
+        )
+        return [r.to_model() for r in results]
+    finally:
+        session.close()
+
+
 def count_by_codes_between(codes: list[str], start: date, end: date) -> int:
     """统计指定 ETF 列表在日期范围内的操作建议数量。"""
     if not codes:

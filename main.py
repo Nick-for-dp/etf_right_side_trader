@@ -72,7 +72,9 @@ def main():
     rebuild_parser.add_argument("--skip-advice", action="store_true",
                                 help="不重算最新交易日的 operation_advice")
 
-    sub.add_parser("run", help="执行一次每日流程")
+    run_parser = sub.add_parser("run", help="执行一次每日流程（自动补齐到 T-1）")
+    run_parser.add_argument("--start", type=str, default=None,
+                            help="强制从指定日期开始补算，用于修复历史断档")
     sub.add_parser("schedule", help="启动定时调度")
     dashboard_parser = sub.add_parser("dashboard", help="启动 Streamlit 仪表盘")
     dashboard_parser.add_argument("--port", type=int, default=18501,
@@ -177,7 +179,7 @@ def main():
             dispose_engine()
     elif args.command == "run":
         from src.runner import run_daily
-        run_daily()
+        run_daily(start_date=date.fromisoformat(args.start) if args.start else None)
     elif args.command == "sync-etf-mapping":
         from src.config import load_config
         from src.database import init_engine, dispose_engine
@@ -203,8 +205,11 @@ def main():
         from src.config import load_config
         config = load_config()
         init_engine(config.db_url)
-        check_all(config)
-        dispose_engine()
+        try:
+            ok = check_all(config)
+        finally:
+            dispose_engine()
+        sys.exit(0 if ok else 1)
     elif args.command == "dashboard":
         import subprocess
         # 明确指定端口，避免 Streamlit 从被系统保留的端口段自动探测失败。

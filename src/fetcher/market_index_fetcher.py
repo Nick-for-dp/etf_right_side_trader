@@ -320,9 +320,16 @@ class MarketIndexFetcher:
             )
         except Exception as exc:
             logger.warning(f"Tushare 全球指数 {index.code}({index.tushare_code}) 拉取失败: {exc}")
-            return pd.DataFrame()
+            df = None
 
-        return df if df is not None else pd.DataFrame()
+        if df is not None and not df.empty:
+            return df
+
+        # Tushare 断更/缺 token 时的兜底：AKShare 新浪港股指数
+        if index.akshare_symbol:
+            logger.warning(f"Tushare 全球指数 {index.code} 无数据，回退 AKShare {index.akshare_symbol}")
+            return self._fetch_hk_index_from_akshare(index, start_date, end_date)
+        return pd.DataFrame()
 
     @rate_limit(min_interval=8.0, key="eastmoney_index_amount")
     def _fetch_amount_from_eastmoney(
