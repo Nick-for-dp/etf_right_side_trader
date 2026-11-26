@@ -330,6 +330,9 @@ market:
     hot_score: 0.55
     lookback_days: 180
     min_indices: 4
+account:
+  capital: 100000
+  max_position_ratio: 0.3
 risk_control:
   rules:
   - params:

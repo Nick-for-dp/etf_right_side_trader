@@ -25,6 +25,8 @@ def run():
     t_str = _latest_trading_day()
     t = date.fromisoformat(t_str)
 
+    _render_health(t)
+
     categories = sorted(set(_SYMBOL_TO_CATEGORY.values()))
     selected_cats = st.multiselect(
         "分类筛选", categories, default=categories,
@@ -45,7 +47,7 @@ def run():
             continue
 
         name = _SYMBOL_TO_NAME.get(symbol, symbol)
-        q = quote_repo.find_latest_quote(symbol)
+        q = quote_repo.find_quote_on_or_before(symbol, t)
         close = round(q.close, 4) if q else None
 
         ind_list = indicators_repo.find_by_code_between(
@@ -104,6 +106,43 @@ def run():
     styled = df.style.map(_highlight_signal, subset=["信号"])
     st.dataframe(styled, use_container_width=True, hide_index=True)
     st.caption(f"共 {len(rows)} 只 ETF，数据截止 {t_str}")
+
+
+def _render_health(t: date) -> None:
+    """数据健康摘要：各域最新日期与近 30 个交易日的断档代码数。"""
+    days = _CALENDAR.get_trading_days_in_range(t - timedelta(days=45), t)
+    expected = {date.fromisoformat(d) for d in days}
+    start = min(expected) if expected else t
+
+    def _gap_codes(loader) -> tuple[int, str]:
+        gaps, latest = 0, None
+        for etf in _CONFIG.etf_list:
+            records = loader(etf.symbol, start, t)
+            dates = {r.date for r in records}
+            if expected - dates:
+                gaps += 1
+            d = max(dates) if dates else None
+            if d and (latest is None or d > latest):
+                latest = d
+        return gaps, str(latest or "N/A")
+
+    quote_gaps, quote_latest = _gap_codes(quote_repo.find_by_code_in_range)
+    ind_gaps, ind_latest = _gap_codes(indicators_repo.find_by_code_between)
+    sig_gaps, sig_latest = _gap_codes(signals_repo.find_by_code_between)
+    adv_gaps, adv_latest = _gap_codes(advice_repo.find_by_code_between)
+
+    with st.expander("数据健康", expanded=False):
+        st.caption(f"基准交易日 {t}，窗口 {start} ~ {t}")
+        st.dataframe(pd.DataFrame([
+            {"数据域": "行情", "最新": quote_latest, "断档 ETF": quote_gaps},
+            {"数据域": "指标", "最新": ind_latest, "断档 ETF": ind_gaps},
+            {"数据域": "信号", "最新": sig_latest, "断档 ETF": sig_gaps},
+            {"数据域": "建议", "最新": adv_latest, "断档 ETF": adv_gaps},
+        ]), use_container_width=True, hide_index=True)
+        if any([quote_gaps, ind_gaps, sig_gaps, adv_gaps]):
+            st.warning("存在断档，执行 python main.py check-data 查看明细并 run 补齐")
+        else:
+            st.success("各域数据完整")
 
 
 def _format_ratio(value: float | None) -> str:

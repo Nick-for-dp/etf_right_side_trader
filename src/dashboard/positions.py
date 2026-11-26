@@ -60,6 +60,8 @@ def run() -> None:
                     "已加仓": pos.add_count,
                     "建议": advice.advice if advice else "",
                     "本次预算": _format_ratio(advice.target_budget_ratio if advice else None),
+                    "目标金额": _execution_amount(advice),
+                    "参考股数": _execution_shares(advice),
                     "本次阶梯": (
                         f"第 {advice.entry_add_step} 次加仓"
                         if advice and advice.entry_add_step is not None else "-"
@@ -197,6 +199,26 @@ def _format_ratio(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value * 100:.0f}%"
+
+
+def _execution_meta(advice: OperationAdvice | None) -> dict:
+    if advice is None:
+        return {}
+    return (advice.advice_meta or {}).get("execution") or {}
+
+
+def _execution_amount(advice: OperationAdvice | None) -> str:
+    amount = _execution_meta(advice).get("amount")
+    if amount is None:
+        return "-"
+    return f"{amount:,.0f} 元"
+
+
+def _execution_shares(advice: OperationAdvice | None) -> str:
+    shares = _execution_meta(advice).get("shares")
+    if shares is None:
+        return "-"
+    return f"{shares:,} 股"
 
 
 def _advice_reason(advice: OperationAdvice | None) -> str:

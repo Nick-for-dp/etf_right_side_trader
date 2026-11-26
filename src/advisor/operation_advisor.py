@@ -40,7 +40,9 @@ def generate_advice(positions: list[dict],
                     entry_budget_overrides: dict | None = None,
                     code_volatility_groups: dict[str, str] | None = None,
                     stop_loss_profiles: dict[str, str] | None = None,
-                    add_cooldown_days: int = 0) -> list[dict]:
+                    add_cooldown_days: int = 0,
+                    account_capital: float | None = None,
+                    max_position_ratio: float = 0.30) -> list[dict]:
     """交叉持仓、信号与门控，返回操作建议列表。
 
     Args:
@@ -56,6 +58,8 @@ def generate_advice(positions: list[dict],
         code_volatility_groups: {code: volatility_group}，用于按波动组应用预算覆盖
         stop_loss_profiles: {code: stop_loss_profile} ETF 止损 profile
         add_cooldown_days: 加仓冷却天数，0 表示不启用
+        account_capital: 账户总资金；提供时在 advice_meta.execution 写入可执行金额与股数
+        max_position_ratio: 单 ETF 仓位上限，占账户比例
 
     Returns:
         操作建议列表，每项含 code、date、position_id、cost、pnl_pct、signal、advice、
@@ -110,6 +114,14 @@ def generate_advice(positions: list[dict],
                 budget_override_rule=None,
                 stop_loss_profile=stop_loss_profile,
                 risk_reason=rs.get("reason"),
+            )
+            advice_meta["execution"] = _execution_plan(
+                advice=advice,
+                budget_plan=None,
+                price=price,
+                position=pos,
+                capital=account_capital,
+                max_position_ratio=max_position_ratio,
             )
             results.append({
                 "code": code,
@@ -204,6 +216,15 @@ def generate_advice(positions: list[dict],
         pnl_pct = None
         if pos is not None and price:
             pnl_pct = round((price - pos["cost"]) / pos["cost"], 6)
+
+        advice_meta["execution"] = _execution_plan(
+            advice=advice,
+            budget_plan=budget_plan,
+            price=price,
+            position=pos,
+            capital=account_capital,
+            max_position_ratio=max_position_ratio,
+        )
 
         results.append({
             "code": code,
@@ -345,6 +366,49 @@ def _entry_budget_multiplier(signal_meta: dict, rule: dict | None) -> tuple[floa
         "budget_override_kind": "quality_tier",
         "budget_quality_tier": tier,
         "budget_multiplier": multiplier,
+    }
+
+
+def _execution_plan(
+    advice: AdviceAction,
+    budget_plan: dict | None,
+    price: float | None,
+    position: dict | None,
+    capital: float | None,
+    max_position_ratio: float,
+) -> dict:
+    """把预算比例翻译成可执行的金额、参考股数与账户占比。
+
+    不提供 account_capital 时返回空 dict（回测自己算仓位，不重复换算）。
+    """
+    if not capital or not price or price <= 0:
+        return {}
+
+    if advice == AdviceAction.SELL:
+        shares = int(position["shares"]) if position else 0
+        return {
+            "shares": shares,
+            "amount": round(shares * price, 2),
+            "position_ratio": 0.0,
+            "lot_size": 100,
+        }
+
+    if advice not in (AdviceAction.OPEN, AdviceAction.ADD):
+        return {}
+
+    target_budget_ratio = _to_float((budget_plan or {}).get("target_budget_ratio"))
+    if target_budget_ratio is None:
+        return {}
+
+    amount = capital * max_position_ratio * target_budget_ratio
+    shares = int(amount // (price * 100)) * 100
+    held_shares = int(position["shares"]) if position else 0
+    position_ratio = (held_shares * price + shares * price) / capital
+    return {
+        "shares": shares,
+        "amount": round(amount, 2),
+        "position_ratio": round(position_ratio, 4),
+        "lot_size": 100,
     }
 
 

@@ -12,6 +12,7 @@ from src.database import (
     init_engine,
     dispose_engine,
     market_index_quote_repo,
+    signals_repo,
 )
 from src.database.schema import Base
 from src.database.schema_maintenance import ensure_schema

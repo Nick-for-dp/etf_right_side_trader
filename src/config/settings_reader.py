@@ -68,6 +68,8 @@ class AppConfig:
     market_indices: list[MarketIndexItem] = field(default_factory=list)
     market_regime_params: dict = field(default_factory=dict)
     lookback_days: int = 400
+    account_capital: float = 100_000.0
+    account_max_position_ratio: float = 0.30
     scheduler_run_time: str = "07:00"
     scheduler_timezone: str = "Asia/Shanghai"
 
@@ -438,6 +440,22 @@ def _validate_scheduler(raw: dict) -> tuple[str, str]:
     return str(run_time), str(timezone)
 
 
+def _validate_account(raw: dict) -> tuple[float, float]:
+    """校验账户口径：总资金与单 ETF 仓位上限。"""
+    capital = raw.get("capital", 100_000)
+    max_ratio = raw.get("max_position_ratio", 0.30)
+    try:
+        capital = float(capital)
+        max_ratio = float(max_ratio)
+    except (TypeError, ValueError):
+        raise ValueError(f"account 配置需为数字，实际: capital={capital}, max_position_ratio={max_ratio}")
+    if capital <= 0:
+        raise ValueError(f"account.capital 需 > 0，实际: {capital}")
+    if not 0 < max_ratio <= 1:
+        raise ValueError(f"account.max_position_ratio 需在 (0, 1]，实际: {max_ratio}")
+    return capital, max_ratio
+
+
 # ── 主入口 ──
 
 def load_config(path: str | Path = "settings.yaml") -> AppConfig:
@@ -481,6 +499,8 @@ def load_config(path: str | Path = "settings.yaml") -> AppConfig:
         market_indices=_validate_market_indices(raw.get("market", {}).get("indices")),
         market_regime_params=_validate_market_regime(raw.get("market", {})),
         lookback_days=_validate_lookback_days(raw.get("data", {})),
+        account_capital=_validate_account(raw.get("account", {}))[0],
+        account_max_position_ratio=_validate_account(raw.get("account", {}))[1],
         scheduler_run_time=run_time,
         scheduler_timezone=timezone,
     )

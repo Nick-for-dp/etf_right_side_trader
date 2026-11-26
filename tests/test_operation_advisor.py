@@ -108,7 +108,7 @@ def test_add_budget_blocks_add_after_all_steps_used():
 
 
 def test_open_advice_contains_entry_budget_explanation():
-    """空仓 BUY 建议落库 70% 建仓预算和解释字段。"""
+    """空仓 BUY 建议落库 70% 建仓预算、可执行金额与股数。"""
     advices = generate_advice(
         positions=[],
         signals=_signals(SignalType.BUY.value),
@@ -119,6 +119,8 @@ def test_open_advice_contains_entry_budget_explanation():
             "add_steps": [{"ratio": 0.15, "require_profit": True, "min_score": 60}],
         },
         stop_loss_profiles={"588000": "atr_2_5"},
+        account_capital=100_000,
+        max_position_ratio=0.3,
     )
 
     advice = advices[0]
@@ -130,6 +132,11 @@ def test_open_advice_contains_entry_budget_explanation():
     assert advice["market_state"] == "NORMAL"
     assert advice["stop_loss_profile"] == "atr_2_5"
     assert advice["advice_meta"]["budget_plan"]["stage"] == "entry"
+
+    execution = advice["advice_meta"]["execution"]
+    assert execution["amount"] == 21_000.0
+    assert execution["shares"] == 20_000
+    assert execution["position_ratio"] == 0.2100
 
 
 def test_add_advice_contains_next_step_budget_explanation():

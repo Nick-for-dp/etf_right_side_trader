@@ -271,6 +271,8 @@ def generate_advice_for_date(
         code_volatility_groups={etf.symbol: etf.volatility_group for etf in config.etf_list},
         stop_loss_profiles=stop_loss_profiles,
         add_cooldown_days=config.strategy_params.get("cooldown_days", 5),
+        account_capital=config.account_capital,
+        max_position_ratio=config.account_max_position_ratio,
     )
     records = [OperationAdvice(**a) for a in advices]
     advice_repo.save_batch(records)
