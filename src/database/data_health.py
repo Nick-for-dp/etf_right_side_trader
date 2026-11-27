@@ -116,15 +116,39 @@ def _check_quotes(config: AppConfig, expected: set[date], t_minus_1: date) -> li
 def _check_index_quotes(config: AppConfig, t_minus_1: date) -> list[str]:
     print(f"[指数行情] {len(config.market_indices)} 个")
     rows, problems = [], []
+    today = date.today()
     for idx in config.market_indices:
         latest = market_index_quote_repo.find_latest_date(idx.code)
-        stale = latest is None or latest < t_minus_1
+        expected = _index_expected_date(idx, today, t_minus_1)
+        stale = latest is None or latest < expected
         if stale:
-            problems.append(f"指数 {idx.code} 最新 {latest or 'N/A'} < {t_minus_1}")
+            problems.append(f"指数 {idx.code} 最新 {latest or 'N/A'} < {expected}")
         rows.append([idx.code, idx.name, idx.source, str(latest or "N/A"),
                      "STALE" if stale else "OK"])
     _print_table(rows, ["代码", "名称", "源", "最新", "状态"])
     return problems
+
+
+def _index_expected_date(idx, today: date, fallback: date) -> date:
+    """按指数所属市场的日历推算应有的最新交易日。
+
+    A 股休市日与美股、港股不同（如美股感恩节休市），用 A 股 T-1 校验
+    美股指数会误报停更，因此按 source 映射到对应交易所日历。
+    """
+    exchange = {
+        "akshare_us": "XNYS",
+        "tushare_global": "XHKG",
+    }.get(idx.source)
+    if exchange is None:
+        return fallback
+    try:
+        cal = TradingCalendarService(exchange=exchange)
+        prev = cal.get_previous_trading_day(today)
+        return date.fromisoformat(prev) if prev else fallback
+    except Exception as exc:  # 日历不可用时退回 A 股口径，只多报不误放
+        logger.warning(f"指数 {idx.code} 日历 {exchange} 不可用: {exc}")
+        return fallback
+
 
 
 def _check_market_regime(t_minus_1: date) -> None:
