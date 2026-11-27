@@ -42,9 +42,9 @@
 
 ### 验证
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe main.py check-data
+```bash
+uv run pytest -q
+uv run python main.py check-data
 ```
 
-封版前已在全新目录 clone 演练：`check-data` 通过，2024-2026 回测复现 38.96% / 15.75%。
+封版前已在全新目录 clone 演练：`check-data` 通过，2024-2026 回测复现 38.96% / 15.75%。`uv lock` 已重锁，环境按锁文件同步后不再安装 scikit-learn / scipy / joblib / threadpoolctl。

@@ -2,7 +2,7 @@
 
 面向 A 股和跨境 ETF 的日线趋势跟踪系统。不预测行情，只在技术趋势确认后入场，在趋势走弱或风控触发时离场，并用市场门控拦截极端下行状态下的买入建议。人工确认执行。
 
-> 状态：**已封版**（tag `v2026-final`，2026-11-26）。以下为封版形态。
+> 状态：**已封版**（tag `v2026-final`，2026-11-27）。以下为封版形态。
 
 ## 核心规则
 
@@ -41,7 +41,7 @@ high_vol (v2.5)  趋势 30%、MACD 25%、RSI 15%、布林 15%、成交量 10%、
 ## 快速开始
 
 ```bash
-uv sync
+uv sync                                 # 依赖按 uv.lock 安装
 cp .env.example .env                    # 数据库连接、Tushare Token
 cp settings.yaml.example settings.yaml  # ETF 列表、策略参数、调度时间
 
